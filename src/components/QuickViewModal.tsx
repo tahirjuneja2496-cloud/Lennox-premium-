@@ -1,0 +1,189 @@
+import React, { useState } from 'react';
+import { X, Check, ShieldCheck, Truck, ArrowRight } from 'lucide-react';
+import { useStore } from '../context/StoreContext';
+import { ProductVariant } from '../types';
+
+interface QuickViewModalProps {
+  onOpenFullProduct: (slug: string) => void;
+}
+
+export const QuickViewModal: React.FC<QuickViewModalProps> = ({ onOpenFullProduct }) => {
+  const { quickViewProduct, setQuickViewProduct, addToCart, formatPrice } = useStore();
+  const [selectedVariant, setSelectedVariant] = useState<ProductVariant | undefined>(
+    quickViewProduct?.variants?.[0]
+  );
+  const [quantity, setQuantity] = useState(1);
+
+  if (!quickViewProduct) return null;
+
+  const currentPrice = selectedVariant?.price ?? quickViewProduct.price;
+  const currentStock = selectedVariant?.stock ?? quickViewProduct.stock;
+  const isOutOfStock = currentStock <= 0;
+
+  const handleAddToCart = () => {
+    addToCart(quickViewProduct, selectedVariant, quantity);
+    setQuickViewProduct(null);
+  };
+
+  const handleOpenDetails = () => {
+    const slug = quickViewProduct.slug;
+    setQuickViewProduct(null);
+    onOpenFullProduct(slug);
+  };
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center p-4 sm:p-6 bg-black/60 backdrop-blur-xs transition-opacity"
+      onClick={() => setQuickViewProduct(null)}
+    >
+      <div
+        className="relative w-full max-w-3xl bg-[#FBFBF9] border border-[#1A1A18]/10 shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-200"
+        onClick={(e) => e.stopPropagation()}
+      >
+        {/* Close Button */}
+        <button
+          onClick={() => setQuickViewProduct(null)}
+          className="absolute top-4 right-4 z-10 p-2 text-[#1A1A18] hover:opacity-60 transition-opacity cursor-pointer bg-[#FBFBF9]/80 backdrop-blur-md rounded-full"
+          aria-label="Close modal"
+        >
+          <X className="w-5 h-5" />
+        </button>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 max-h-[85vh] overflow-y-auto">
+          {/* Image */}
+          <div className="aspect-[3/4] md:aspect-auto bg-[#F4F4F0] relative">
+            <img
+              src={selectedVariant?.image || quickViewProduct.images?.[0]}
+              alt={quickViewProduct.name}
+              referrerPolicy="no-referrer"
+              className="w-full h-full object-cover object-center"
+            />
+          </div>
+
+          {/* Details */}
+          <div className="p-6 md:p-8 flex flex-col justify-between">
+            <div>
+              {/* Category & SKU */}
+              <div className="flex items-center justify-between text-xs text-[#71716A] uppercase tracking-wider">
+                <span>{quickViewProduct.category}</span>
+                <span className="font-mono text-[11px]">{selectedVariant?.sku || quickViewProduct.sku}</span>
+              </div>
+
+              {/* Title */}
+              <h2 className="mt-2 text-2xl font-serif text-[#1A1A18] font-normal leading-snug">
+                {quickViewProduct.name}
+              </h2>
+
+              {/* Price */}
+              <div className="mt-3 flex items-baseline gap-3 text-lg tabular-nums">
+                <span className="font-semibold text-[#1A1A18]">{formatPrice(currentPrice)}</span>
+                {quickViewProduct.originalPrice > currentPrice && (
+                  <span className="text-sm text-[#8A8A82] line-through">
+                    {formatPrice(quickViewProduct.originalPrice)}
+                  </span>
+                )}
+                {quickViewProduct.discountPercent > 0 && (
+                  <span className="text-xs text-emerald-800 font-medium">
+                    Save {quickViewProduct.discountPercent}%
+                  </span>
+                )}
+              </div>
+
+              {/* Description */}
+              <p className="mt-4 text-xs leading-relaxed text-[#52524D] line-clamp-3">
+                {quickViewProduct.shortDescription || quickViewProduct.description}
+              </p>
+
+              {/* Variant Selector */}
+              {quickViewProduct.variants && quickViewProduct.variants.length > 0 && (
+                <div className="mt-6 pt-5 border-t border-[#1A1A18]/10">
+                  <label className="text-xs uppercase tracking-wider text-[#1A1A18] font-medium block mb-2">
+                    Edition / Option:
+                  </label>
+                  <div className="flex flex-wrap gap-2">
+                    {quickViewProduct.variants.map((variant) => (
+                      <button
+                        key={variant.id}
+                        onClick={() => setSelectedVariant(variant)}
+                        className={`px-3 py-1.5 text-xs font-medium border transition-colors cursor-pointer ${
+                          selectedVariant?.id === variant.id
+                            ? 'border-[#1A1A18] bg-[#1A1A18] text-[#FBFBF9]'
+                            : 'border-[#1A1A18]/20 text-[#1A1A18] hover:border-[#1A1A18]'
+                        }`}
+                      >
+                        {variant.name}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Quantity */}
+              <div className="mt-5 flex items-center gap-4">
+                <span className="text-xs uppercase tracking-wider text-[#1A1A18] font-medium">
+                  Quantity:
+                </span>
+                <div className="flex items-center border border-[#1A1A18]/20">
+                  <button
+                    onClick={() => setQuantity((q) => Math.max(1, q - 1))}
+                    disabled={quantity <= 1}
+                    className="px-3 py-1 text-sm text-[#1A1A18] hover:bg-[#EAEAE5] disabled:opacity-30 cursor-pointer"
+                  >
+                    -
+                  </button>
+                  <span className="px-3 py-1 text-xs tabular-nums font-medium text-[#1A1A18]">
+                    {quantity}
+                  </span>
+                  <button
+                    onClick={() => setQuantity((q) => Math.min(currentStock, q + 1))}
+                    disabled={quantity >= currentStock}
+                    className="px-3 py-1 text-sm text-[#1A1A18] hover:bg-[#EAEAE5] disabled:opacity-30 cursor-pointer"
+                  >
+                    +
+                  </button>
+                </div>
+                <span className="text-xs text-[#71716A]">
+                  {isOutOfStock
+                    ? 'Unavailable'
+                    : currentStock <= 5
+                    ? `Only ${currentStock} available`
+                    : 'In Stock'}
+                </span>
+              </div>
+            </div>
+
+            {/* Actions & Links */}
+            <div className="mt-8 space-y-3">
+              <button
+                onClick={handleAddToCart}
+                disabled={isOutOfStock}
+                className="w-full py-3.5 bg-[#1A1A18] hover:bg-[#333330] disabled:bg-[#8A8A82] text-[#FBFBF9] text-xs uppercase tracking-widest font-semibold transition-colors cursor-pointer"
+              >
+                {isOutOfStock ? 'Sold Out' : 'Add to Shopping Bag'}
+              </button>
+
+              <button
+                onClick={handleOpenDetails}
+                className="w-full py-2.5 text-xs uppercase tracking-wider font-medium text-[#1A1A18] hover:opacity-70 transition-opacity flex items-center justify-center gap-1.5 cursor-pointer"
+              >
+                <span>View Complete Product Details & Specs</span>
+                <ArrowRight className="w-3.5 h-3.5" />
+              </button>
+
+              <div className="pt-3 border-t border-[#1A1A18]/10 grid grid-cols-2 gap-2 text-[11px] text-[#71716A]">
+                <div className="flex items-center gap-1.5">
+                  <Truck className="w-3.5 h-3.5 text-[#1A1A18]" />
+                  <span>Global Express Delivery</span>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <ShieldCheck className="w-3.5 h-3.5 text-[#1A1A18]" />
+                  <span>Certificate of Authenticity</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};

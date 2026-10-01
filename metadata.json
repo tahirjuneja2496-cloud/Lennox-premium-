@@ -1,0 +1,6 @@
+{
+  "name": "Atelier V - Ultra-Premium E-Commerce",
+  "description": "Production-ready ultra-premium international luxury ecommerce storefront and administrative management suite.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
