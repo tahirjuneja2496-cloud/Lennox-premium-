@@ -1,11 +1,18 @@
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
 import type { Order } from '../types/index.ts';
 
-const supabaseUrl = process.env.SUPABASE_URL;
+const rawUrl =
+  process.env.SUPABASE_URL ||
+  'https://mnlmparjckweabyvepfd.supabase.co';
+
+// Sanitize URL by removing /rest/v1 or trailing slashes
+const supabaseUrl = rawUrl.replace(/\/rest\/v1\/?$/, '').replace(/\/$/, '');
+
 const supabaseKey =
   process.env.SUPABASE_SERVICE_ROLE_KEY ||
   process.env.SUPABASE_KEY ||
-  process.env.SUPABASE_ANON_KEY;
+  process.env.SUPABASE_ANON_KEY ||
+  'sb_publishable_PPRKxUcU0-SIGo15oIsUlQ_Cfly-iT-';
 
 export const SUPABASE_BUCKET_NAME = process.env.SUPABASE_STORAGE_BUCKET || 'product-images';
 
@@ -19,7 +26,7 @@ if (supabaseUrl && supabaseKey) {
         autoRefreshToken: false
       }
     });
-    console.log('[Atelier V] Supabase Database & Storage integration activated.');
+    console.log(`[Atelier V] Connected to Supabase Project: ${supabaseUrl}`);
   } catch (err) {
     console.warn('[Atelier V] Failed to initialize Supabase client:', err);
   }
@@ -58,12 +65,28 @@ export async function uploadImageToSupabase(
       .replace(/[^a-zA-Z0-9_-]/g, '_');
     const filePath = `products/${Date.now()}_${cleanBaseName}.${cleanExt}`;
 
-    const { error } = await client.storage
+    let { error } = await client.storage
       .from(SUPABASE_BUCKET_NAME)
       .upload(filePath, buffer, {
         contentType,
         upsert: true
       });
+
+    // If bucket does not exist, attempt auto-creation
+    if (error && (error.message?.includes('not found') || error.message?.includes('Bucket'))) {
+      try {
+        await client.storage.createBucket(SUPABASE_BUCKET_NAME, { public: true });
+        const retry = await client.storage
+          .from(SUPABASE_BUCKET_NAME)
+          .upload(filePath, buffer, {
+            contentType,
+            upsert: true
+          });
+        error = retry.error;
+      } catch {
+        // Ignored
+      }
+    }
 
     if (error) {
       console.warn('[Atelier V] Supabase Storage upload notice:', error.message);
@@ -75,6 +98,7 @@ export async function uploadImageToSupabase(
       .getPublicUrl(filePath);
 
     if (urlData?.publicUrl) {
+      console.log('[Atelier V] Uploaded image to Supabase Storage CDN:', urlData.publicUrl);
       return urlData.publicUrl;
     }
     return null;
@@ -112,7 +136,7 @@ export async function saveOrderToSupabase(order: Order): Promise<boolean> {
 
     if (error) {
       console.warn('[Atelier V] Supabase saveOrder notice:', error.message);
-      // Fallback with minimal columns if specific column names differ
+      // Fallback with core columns if specific column names differ
       const coreRow = {
         id: order.id,
         customer: order.customer,
