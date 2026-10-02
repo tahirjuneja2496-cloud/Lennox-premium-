@@ -9,6 +9,37 @@ import {
   INITIAL_REVIEWS
 } from '../data/initialData';
 
+let cachedAdminToken: string | null = null;
+
+export const setAdminToken = (token: string | null) => {
+  cachedAdminToken = token;
+  if (typeof window !== 'undefined') {
+    if (token) {
+      localStorage.setItem('atelierv_adm_token', token);
+      sessionStorage.setItem('atelierv_adm_token', token);
+    } else {
+      localStorage.removeItem('atelierv_adm_token');
+      sessionStorage.removeItem('atelierv_adm_token');
+    }
+  }
+};
+
+export const getAdminToken = (): string | null => {
+  if (!cachedAdminToken && typeof window !== 'undefined') {
+    cachedAdminToken = localStorage.getItem('atelierv_adm_token') || sessionStorage.getItem('atelierv_adm_token');
+  }
+  return cachedAdminToken;
+};
+
+const getAuthHeaders = (): Record<string, string> => {
+  const token = getAdminToken();
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  if (token) {
+    headers['Authorization'] = `Bearer ${token}`;
+  }
+  return headers;
+};
+
 export const api = {
   // Settings
   async getSettings(): Promise<StoreSettings> {
@@ -24,10 +55,13 @@ export const api = {
   async updateSettings(settings: Partial<StoreSettings>): Promise<StoreSettings> {
     const res = await fetch('/api/settings', {
       method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
+      headers: getAuthHeaders(),
       body: JSON.stringify(settings)
     });
-    if (!res.ok) throw new Error('Failed to update settings');
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error || 'Failed to update settings');
+    }
     return await res.json();
   },
 
@@ -45,11 +79,11 @@ export const api = {
   async createProduct(product: Partial<Product>): Promise<Product> {
     const res = await fetch('/api/products', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: getAuthHeaders(),
       body: JSON.stringify(product)
     });
     if (!res.ok) {
-      const err = await res.json();
+      const err = await res.json().catch(() => ({}));
       throw new Error(err.error || 'Failed to create product');
     }
     return await res.json();
@@ -58,24 +92,30 @@ export const api = {
   async updateProduct(id: string, product: Partial<Product>): Promise<Product> {
     const res = await fetch(`/api/products/${id}`, {
       method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
+      headers: getAuthHeaders(),
       body: JSON.stringify(product)
     });
     if (!res.ok) {
-      const err = await res.json();
+      const err = await res.json().catch(() => ({}));
       throw new Error(err.error || 'Failed to update product');
     }
     return await res.json();
   },
 
   async deleteProduct(id: string): Promise<boolean> {
-    const res = await fetch(`/api/products/${id}`, { method: 'DELETE' });
+    const res = await fetch(`/api/products/${id}`, {
+      method: 'DELETE',
+      headers: getAuthHeaders()
+    });
     if (!res.ok) throw new Error('Failed to delete product');
     return true;
   },
 
   async duplicateProduct(id: string): Promise<Product> {
-    const res = await fetch(`/api/products/${id}/duplicate`, { method: 'POST' });
+    const res = await fetch(`/api/products/${id}/duplicate`, {
+      method: 'POST',
+      headers: getAuthHeaders()
+    });
     if (!res.ok) throw new Error('Failed to duplicate product');
     return await res.json();
   },
@@ -94,38 +134,48 @@ export const api = {
   async createCategory(cat: Partial<Category>): Promise<Category> {
     const res = await fetch('/api/categories', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: getAuthHeaders(),
       body: JSON.stringify(cat)
     });
-    if (!res.ok) throw new Error('Failed to create category');
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error || 'Failed to create category');
+    }
     return await res.json();
   },
 
   async updateCategory(id: string, cat: Partial<Category>): Promise<Category> {
     const res = await fetch(`/api/categories/${id}`, {
       method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
+      headers: getAuthHeaders(),
       body: JSON.stringify(cat)
     });
-    if (!res.ok) throw new Error('Failed to update category');
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error || 'Failed to update category');
+    }
     return await res.json();
   },
 
   async deleteCategory(id: string): Promise<boolean> {
-    const res = await fetch(`/api/categories/${id}`, { method: 'DELETE' });
+    const res = await fetch(`/api/categories/${id}`, {
+      method: 'DELETE',
+      headers: getAuthHeaders()
+    });
     if (!res.ok) throw new Error('Failed to delete category');
     return true;
   },
 
   // Orders
   async getOrders(): Promise<Order[]> {
-    try {
-      const res = await fetch('/api/orders');
-      if (!res.ok) throw new Error('Failed to fetch orders');
-      return await res.json();
-    } catch {
-      return INITIAL_ORDERS;
+    const res = await fetch('/api/orders', {
+      headers: getAuthHeaders()
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error || 'Failed to fetch orders');
     }
+    return await res.json();
   },
 
   async createOrder(order: any): Promise<Order> {
@@ -134,29 +184,35 @@ export const api = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(order)
     });
-    if (!res.ok) throw new Error('Failed to create order');
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error || 'Failed to create order');
+    }
     return await res.json();
   },
 
   async updateOrder(id: string, update: Partial<Order>): Promise<Order> {
     const res = await fetch(`/api/orders/${id}`, {
       method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
+      headers: getAuthHeaders(),
       body: JSON.stringify(update)
     });
-    if (!res.ok) throw new Error('Failed to update order');
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error || 'Failed to update order');
+    }
     return await res.json();
   },
 
   // Customers
   async getCustomers(): Promise<CustomerProfile[]> {
-    try {
-      const res = await fetch('/api/customers');
-      if (!res.ok) throw new Error('Failed to fetch customers');
-      return await res.json();
-    } catch {
+    const res = await fetch('/api/customers', {
+      headers: getAuthHeaders()
+    });
+    if (!res.ok) {
       return INITIAL_CUSTOMERS;
     }
+    return await res.json();
   },
 
   // Coupons
@@ -173,7 +229,7 @@ export const api = {
   async createCoupon(coupon: Partial<Coupon>): Promise<Coupon> {
     const res = await fetch('/api/coupons', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: getAuthHeaders(),
       body: JSON.stringify(coupon)
     });
     if (!res.ok) throw new Error('Failed to create coupon');
@@ -183,7 +239,7 @@ export const api = {
   async updateCoupon(id: string, coupon: Partial<Coupon>): Promise<Coupon> {
     const res = await fetch(`/api/coupons/${id}`, {
       method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
+      headers: getAuthHeaders(),
       body: JSON.stringify(coupon)
     });
     if (!res.ok) throw new Error('Failed to update coupon');
@@ -191,26 +247,23 @@ export const api = {
   },
 
   async deleteCoupon(id: string): Promise<boolean> {
-    const res = await fetch(`/api/coupons/${id}`, { method: 'DELETE' });
+    const res = await fetch(`/api/coupons/${id}`, {
+      method: 'DELETE',
+      headers: getAuthHeaders()
+    });
     if (!res.ok) throw new Error('Failed to delete coupon');
     return true;
   },
 
-  async validateCoupon(code: string, subtotal: number): Promise<{
-    valid: boolean;
-    code: string;
-    discountAmount: number;
-    discountType: 'percentage' | 'fixed';
-    discountValue: number;
-  }> {
+  async validateCoupon(code: string, cartTotal: number): Promise<{ valid: boolean; code: string; discountAmount: number; discountType: string; discountValue: number }> {
     const res = await fetch('/api/coupons/validate', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ code, subtotal })
+      body: JSON.stringify({ code, cartTotal })
     });
     if (!res.ok) {
-      const err = await res.json();
-      throw new Error(err.error || 'Invalid coupon');
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error || 'Invalid coupon code');
     }
     return await res.json();
   },
@@ -233,14 +286,14 @@ export const api = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(review)
     });
-    if (!res.ok) throw new Error('Failed to create review');
+    if (!res.ok) throw new Error('Failed to submit review');
     return await res.json();
   },
 
   async updateReview(id: string, review: Partial<Review>): Promise<Review> {
     const res = await fetch(`/api/reviews/${id}`, {
       method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
+      headers: getAuthHeaders(),
       body: JSON.stringify(review)
     });
     if (!res.ok) throw new Error('Failed to update review');
@@ -285,9 +338,26 @@ export const api = {
       body: JSON.stringify({ email, password })
     });
     if (!res.ok) {
-      const err = await res.json();
+      const err = await res.json().catch(() => ({}));
       throw new Error(err.error || 'Authentication failed');
     }
-    return await res.json();
+    const data = await res.json();
+    if (data.token) {
+      setAdminToken(data.token);
+    }
+    return data;
+  },
+
+  async adminLogout(): Promise<void> {
+    try {
+      await fetch('/api/admin/logout', {
+        method: 'POST',
+        headers: getAuthHeaders()
+      });
+    } catch {
+      // Ignored
+    } finally {
+      setAdminToken(null);
+    }
   }
 };

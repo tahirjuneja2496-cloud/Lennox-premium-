@@ -319,10 +319,10 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigateTab })
                   <td className="py-3 px-2 font-mono font-medium text-[#1A1A18]">{order.id}</td>
                   <td className="py-3 px-2">
                     <p className="font-medium text-[#1A1A18]">{order.customer.fullName}</p>
-                    <p className="text-[11px] text-[#71716A]">{order.customer.email}</p>
+                    <p className="text-[11px] text-[#71716A]">{order.customer.mobileNumber || order.customer.email}</p>
                   </td>
                   <td className="py-3 px-2 text-[#52524D]">
-                    {order.customer.city}, {order.customer.country}
+                    {order.customer.city}, {order.customer.state || order.customer.country || 'India'}
                   </td>
                   <td className="py-3 px-2">
                     <span

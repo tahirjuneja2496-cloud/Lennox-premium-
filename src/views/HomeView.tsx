@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { ArrowRight, Compass, ShieldCheck, Sparkles, Star } from 'lucide-react';
+import { ArrowRight, Compass, ShieldCheck, Sparkles } from 'lucide-react';
 import { useStore } from '../context/StoreContext';
 import { ProductCard } from '../components/ProductCard';
 import { Product } from '../types';
@@ -19,10 +19,14 @@ export const HomeView: React.FC<HomeViewProps> = ({ onNavigate, onSelectProduct 
 
   const displayedProducts =
     activeTab === 'featured'
-      ? featuredProducts.length > 0 ? featuredProducts : products.slice(0, 4)
+      ? featuredProducts.length > 0 ? featuredProducts : products.filter(p => p.published).slice(0, 4)
       : activeTab === 'newArrivals'
-      ? newArrivals.length > 0 ? newArrivals : products.slice(0, 4)
-      : bestsellers.length > 0 ? bestsellers : products.slice(0, 4);
+      ? newArrivals.length > 0 ? newArrivals : products.filter(p => p.published).slice(0, 4)
+      : bestsellers.length > 0 ? bestsellers : products.filter(p => p.published).slice(0, 4);
+
+  const heroImage = settings.hero?.image?.startsWith('/src/assets/images/')
+    ? settings.hero.image.replace('/src/assets/images/', '/images/')
+    : settings.hero?.image || '/images/hero_luxury_editorial_1790850435776.jpg';
 
   return (
     <div className="space-y-24 sm:space-y-32">
@@ -31,13 +35,12 @@ export const HomeView: React.FC<HomeViewProps> = ({ onNavigate, onSelectProduct 
       <section className="relative w-full">
         <div className="relative h-[80vh] min-h-[560px] max-h-[820px] w-full overflow-hidden bg-[#EAEAE5]">
           <img
-            src={settings.hero?.image || '/src/assets/images/hero_luxury_editorial_1790850435776.jpg'}
+            src={heroImage}
             alt="Atelier V Editorial Campaign"
             referrerPolicy="no-referrer"
             className="w-full h-full object-cover object-center filter brightness-[0.92]"
           />
-          {/* Subtle measured scrim for contrast */}
-          <div className="absolute inset-0 bg-gradient-to-t from-black/75 via-black/30 to-black/10" />
+          <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/35 to-black/10" />
 
           {/* Hero Content */}
           <div className="absolute inset-0 max-w-7xl mx-auto px-6 sm:px-8 flex flex-col justify-end pb-16 sm:pb-20 text-[#FBFBF9]">
@@ -92,39 +95,44 @@ export const HomeView: React.FC<HomeViewProps> = ({ onNavigate, onSelectProduct 
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
-          {categories.filter((c) => c.enabled).map((cat) => (
-            <div
-              key={cat.id}
-              onClick={() => onNavigate('shop', cat.name)}
-              className="group relative aspect-[4/5] overflow-hidden bg-[#F4F4F0] cursor-pointer"
-            >
-              <img
-                src={cat.image}
-                alt={cat.name}
-                referrerPolicy="no-referrer"
-                className="w-full h-full object-cover object-center transition-transform duration-700 ease-out group-hover:scale-105"
-              />
-              <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/20 to-transparent" />
-              
-              <div className="absolute inset-0 p-6 flex flex-col justify-end text-[#FBFBF9]">
-                <h3 className="text-2xl font-serif">{cat.name}</h3>
-                <p className="text-xs text-[#D4D4CD] line-clamp-2 mt-1.5 opacity-90 leading-relaxed font-light">
-                  {cat.description}
-                </p>
-                <div className="mt-4 flex items-center gap-2 text-xs uppercase tracking-wider font-medium text-[#FBFBF9]">
-                  <span>Discover Editions</span>
-                  <ArrowRight className="w-3.5 h-3.5 transition-transform duration-300 group-hover:translate-x-1" />
+          {categories.filter((c) => c.enabled).map((cat) => {
+            const catImg = cat.image?.startsWith('/src/assets/images/')
+              ? cat.image.replace('/src/assets/images/', '/images/')
+              : cat.image;
+            return (
+              <div
+                key={cat.id}
+                onClick={() => onNavigate('shop', cat.name)}
+                className="group relative aspect-[4/5] overflow-hidden bg-[#F4F4F0] cursor-pointer"
+              >
+                <img
+                  src={catImg}
+                  alt={cat.name}
+                  referrerPolicy="no-referrer"
+                  className="w-full h-full object-cover object-center transition-transform duration-700 ease-out group-hover:scale-105"
+                />
+                <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/20 to-transparent" />
+                
+                <div className="absolute inset-0 p-6 flex flex-col justify-end text-[#FBFBF9]">
+                  <h3 className="text-2xl font-serif">{cat.name}</h3>
+                  <p className="text-xs text-[#D4D4CD] line-clamp-2 mt-1.5 opacity-90 leading-relaxed font-light">
+                    {cat.description}
+                  </p>
+                  <div className="mt-4 flex items-center gap-2 text-xs uppercase tracking-wider font-medium text-[#FBFBF9]">
+                    <span>Discover Editions</span>
+                    <ArrowRight className="w-3.5 h-3.5 transition-transform duration-300 group-hover:translate-x-1" />
+                  </div>
                 </div>
               </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       </section>
 
       {/* Featured / New Arrivals / Bestsellers Section */}
       <section className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-8">
-          {/* Filter tabs using interactive segmented controls */}
+          {/* Segmented filter controls */}
           <div className="flex items-center gap-1 p-1 bg-[#EAEAE5] max-w-fit">
             <button
               onClick={() => setActiveTab('featured')}
@@ -162,7 +170,7 @@ export const HomeView: React.FC<HomeViewProps> = ({ onNavigate, onSelectProduct 
             onClick={() => onNavigate('shop')}
             className="text-xs uppercase tracking-widest font-semibold text-[#1A1A18] hover:opacity-70 transition-opacity flex items-center gap-1.5 cursor-pointer"
           >
-            <span>View Complete Catalog ({products.length})</span>
+            <span>View All Creations ({products.filter(p => p.published).length})</span>
             <ArrowRight className="w-3.5 h-3.5" />
           </button>
         </div>
@@ -191,7 +199,7 @@ export const HomeView: React.FC<HomeViewProps> = ({ onNavigate, onSelectProduct 
                 Designed to resist temporal trends and mature with dignified patina.
               </h2>
               <p className="text-sm text-[#52524D] leading-relaxed">
-                Every piece in the collection is manufactured without compromise: Roman travertine carved in Tivoli, cast bronze chilled in sand moulds near Lyon, double-faced cashmere woven in Biella, and full-grain bridle leather tanned naturally with chestnut bark in Florence.
+                Every piece in the collection is crafted without compromise: Roman travertine carved in traditional stone masons, cast bronze chilled in sand moulds, double-faced cashmere woven in heritage mills, and full-grain bridle leather tanned naturally with chestnut bark.
               </p>
               <div className="pt-2 grid grid-cols-3 gap-6 text-center sm:text-left">
                 <div>
@@ -203,80 +211,19 @@ export const HomeView: React.FC<HomeViewProps> = ({ onNavigate, onSelectProduct 
                   <p className="text-[11px] uppercase tracking-wider text-[#71716A] mt-0.5">Integrity Guarantee</p>
                 </div>
                 <div>
-                  <p className="font-serif text-2xl font-semibold text-[#1A1A18]">Bespoke</p>
-                  <p className="text-[11px] uppercase tracking-wider text-[#71716A] mt-0.5">Numbered Edition</p>
+                  <p className="font-serif text-2xl font-semibold text-[#1A1A18]">Numbered</p>
+                  <p className="text-[11px] uppercase tracking-wider text-[#71716A] mt-0.5">Bespoke Editions</p>
                 </div>
               </div>
             </div>
 
             <div className="lg:col-span-5 relative aspect-square overflow-hidden bg-[#E2E2DC]">
               <img
-                src="/src/assets/images/product_sculptural_lamp_1790850449675.jpg"
+                src="/images/product_sculptural_lamp_1790850449675.jpg"
                 alt="Craftsmanship detail"
                 referrerPolicy="no-referrer"
                 className="w-full h-full object-cover object-center"
               />
-            </div>
-          </div>
-        </div>
-      </section>
-
-      {/* Curated Client Reflections */}
-      <section className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-        <div className="text-center max-w-xl mx-auto mb-12">
-          <span className="text-xs uppercase tracking-widest text-[#71716A]">Verified Patrons</span>
-          <h2 className="text-3xl font-serif text-[#1A1A18] mt-1 font-normal">Patron Reflections</h2>
-        </div>
-
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
-          <div className="p-8 bg-white border border-[#1A1A18]/5 flex flex-col justify-between shadow-xs">
-            <div className="space-y-4">
-              <div className="flex text-amber-900 gap-1">
-                {[...Array(5)].map((_, i) => (
-                  <Star key={i} className="w-3.5 h-3.5 fill-current" />
-                ))}
-              </div>
-              <p className="text-sm font-serif italic text-[#1A1A18] leading-relaxed">
-                &ldquo;The bronze lamp transformed our library entirely. The light through the alabaster has an ethereal serenity rarely found in contemporary lighting.&rdquo;
-              </p>
-            </div>
-            <div className="mt-6 pt-4 border-t border-[#1A1A18]/10 text-xs">
-              <p className="font-medium text-[#1A1A18]">Alexander H.</p>
-              <p className="text-[#71716A]">London · Verified Collector</p>
-            </div>
-          </div>
-
-          <div className="p-8 bg-white border border-[#1A1A18]/5 flex flex-col justify-between shadow-xs">
-            <div className="space-y-4">
-              <div className="flex text-amber-900 gap-1">
-                {[...Array(5)].map((_, i) => (
-                  <Star key={i} className="w-3.5 h-3.5 fill-current" />
-                ))}
-              </div>
-              <p className="text-sm font-serif italic text-[#1A1A18] leading-relaxed">
-                &ldquo;The sovereign double-faced cashmere overcoat is without question the finest garment in my wardrobe. Softness and weight are balanced to perfection.&rdquo;
-              </p>
-            </div>
-            <div className="mt-6 pt-4 border-t border-[#1A1A18]/10 text-xs">
-              <p className="font-medium text-[#1A1A18]">Elena R.</p>
-              <p className="text-[#71716A]">Geneva · Verified Patron</p>
-            </div>
-          </div>
-
-          <div className="p-8 bg-white border border-[#1A1A18]/5 flex flex-col justify-between shadow-xs">
-            <div className="space-y-4">
-              <div className="flex text-amber-900 gap-1">
-                {[...Array(5)].map((_, i) => (
-                  <Star key={i} className="w-3.5 h-3.5 fill-current" />
-                ))}
-              </div>
-              <p className="text-sm font-serif italic text-[#1A1A18] leading-relaxed">
-                &ldquo;The bridle leather weekender is sturdy, smells incredible, and the brass hardware is substantial. Will likely pass this down through generations.&rdquo;
-              </p>
-            </div>
-            <div className="mt-6 pt-4 border-t border-[#1A1A18]/10 text-xs">
-              <p className="font-medium text-[#1A1A18]">David K.</p>
-              <p className="text-[#71716A]">New York · Verified Traveler</p>
             </div>
           </div>
         </div>

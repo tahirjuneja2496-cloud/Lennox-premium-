@@ -2,6 +2,7 @@ import express from 'express';
 import type { Request, Response } from 'express';
 import path from 'path';
 import fs from 'fs';
+import crypto from 'crypto';
 import { fileURLToPath } from 'url';
 import { createServer as createViteServer } from 'vite';
 import {
@@ -14,24 +15,38 @@ import {
   INITIAL_REVIEWS
 } from './src/data/initialData.ts';
 import type { Product, Category, Order, CustomerProfile, Coupon, Review, StoreSettings } from './src/types/index.ts';
+import {
+  isSupabaseConnected,
+  saveOrderToSupabase,
+  getOrdersFromSupabase,
+  updateOrderInSupabase,
+  uploadImageToSupabase
+} from './src/db/supabase.ts';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-const PORT = parseInt(process.env.PORT || '3000', 10);
+const portArgIndex = process.argv.indexOf('--port');
+const cliPort = portArgIndex !== -1 && process.argv[portArgIndex + 1] ? parseInt(process.argv[portArgIndex + 1], 10) : undefined;
+const PORT = cliPort || parseInt(process.env.PORT || '3000', 10);
 const DATA_DIR = path.join(__dirname, 'data');
 const UPLOADS_DIR = path.join(__dirname, 'uploads');
 const DB_FILE = path.join(DATA_DIR, 'database.json');
+const TMP_DB_FILE = path.join('/tmp', 'atelierv_db.json');
 
-// Ensure directories exist
-if (!fs.existsSync(DATA_DIR)) {
-  fs.mkdirSync(DATA_DIR, { recursive: true });
+// Ensure directories exist if writeable
+try {
+  if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
+} catch (e) {
+  // Read-only filesystem in serverless
 }
-if (!fs.existsSync(UPLOADS_DIR)) {
-  fs.mkdirSync(UPLOADS_DIR, { recursive: true });
+try {
+  if (!fs.existsSync(UPLOADS_DIR)) fs.mkdirSync(UPLOADS_DIR, { recursive: true });
+} catch (e) {
+  // Read-only filesystem in serverless
 }
 
-interface DatabaseSchema {
+export interface DatabaseSchema {
   settings: StoreSettings;
   categories: Category[];
   products: Product[];
@@ -55,127 +70,275 @@ function getInitialDatabase(): DatabaseSchema {
 
 let dbCache: DatabaseSchema | null = null;
 
-function readDatabase(): DatabaseSchema {
-  if (dbCache) return dbCache;
-  try {
-    if (fs.existsSync(DB_FILE)) {
-      const content = fs.readFileSync(DB_FILE, 'utf-8');
-      dbCache = JSON.parse(content);
-      return dbCache!;
+// Persistent read supporting Vercel KV / Upstash Redis, file system, or memory
+export async function readDatabase(): Promise<DatabaseSchema> {
+  // 1. Try Vercel KV / Upstash Redis if configured
+  const kvUrl = process.env.KV_REST_API_URL || process.env.UPSTASH_REDIS_REST_URL;
+  const kvToken = process.env.KV_REST_API_TOKEN || process.env.UPSTASH_REDIS_REST_TOKEN;
+  if (kvUrl && kvToken) {
+    try {
+      const res = await fetch(`${kvUrl}/get/atelierv_db`, {
+        headers: { Authorization: `Bearer ${kvToken}` }
+      });
+      if (res.ok) {
+        const json = await res.json();
+        if (json.result) {
+          const parsed = typeof json.result === 'string' ? JSON.parse(json.result) : json.result;
+          dbCache = parsed;
+          return dbCache!;
+        }
+      }
+    } catch (e) {
+      console.warn('Cloud KV read error, falling back:', e);
     }
-  } catch (err) {
-    console.error('Error reading database file, resetting to initial:', err);
   }
+
+  // 2. Return cache if available in memory
+  if (dbCache) return dbCache;
+
+  // 3. Try reading from filesystem (DB_FILE or /tmp)
+  const candidateFiles = [DB_FILE, TMP_DB_FILE];
+  for (const file of candidateFiles) {
+    try {
+      if (fs.existsSync(file)) {
+        const content = fs.readFileSync(file, 'utf-8');
+        dbCache = JSON.parse(content);
+        return dbCache!;
+      }
+    } catch (err) {
+      // Continue to next candidate
+    }
+  }
+
+  // 4. Fallback to initial seed database
   dbCache = getInitialDatabase();
-  writeDatabase(dbCache);
+  await writeDatabase(dbCache);
   return dbCache;
 }
 
-function writeDatabase(data: DatabaseSchema) {
+// Persistent write supporting Vercel KV / Upstash Redis, file system, and memory
+export async function writeDatabase(data: DatabaseSchema): Promise<void> {
   dbCache = data;
+
+  // 1. Write to Vercel KV / Upstash Redis if configured
+  const kvUrl = process.env.KV_REST_API_URL || process.env.UPSTASH_REDIS_REST_URL;
+  const kvToken = process.env.KV_REST_API_TOKEN || process.env.UPSTASH_REDIS_REST_TOKEN;
+  if (kvUrl && kvToken) {
+    try {
+      await fetch(`${kvUrl}/set/atelierv_db`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${kvToken}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(data)
+      });
+    } catch (e) {
+      console.warn('Cloud KV write error:', e);
+    }
+  }
+
+  // 2. Write to local file if possible
   try {
+    if (!fs.existsSync(DATA_DIR)) {
+      fs.mkdirSync(DATA_DIR, { recursive: true });
+    }
     fs.writeFileSync(DB_FILE, JSON.stringify(data, null, 2), 'utf-8');
+    return;
   } catch (err) {
-    console.error('Error writing database file:', err);
+    // If local dir is read-only (Vercel serverless), write to /tmp
+    try {
+      fs.writeFileSync(TMP_DB_FILE, JSON.stringify(data, null, 2), 'utf-8');
+    } catch (e) {
+      // Retained in memory cache
+    }
   }
 }
 
-async function startServer() {
-  const app = express();
+export const app = express();
 
-  // High body size limit for direct base64 image uploads
-  app.use(express.json({ limit: '50mb' }));
-  app.use(express.urlencoded({ extended: true, limit: '50mb' }));
+// High body size limit for direct base64 image uploads from phone/computer
+app.use(express.json({ limit: '50mb' }));
+app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
-  // Static directory for uploaded files
-  app.use('/uploads', express.static(UPLOADS_DIR));
+// Static directories
+app.use('/images', express.static(path.join(__dirname, 'public/images')));
+app.use('/uploads', express.static(UPLOADS_DIR));
 
-  // Initialize DB
-  readDatabase();
+// -------------------------------------------------------------
+// API: Direct Image File Upload (Supabase Storage + Local Persistence)
+// -------------------------------------------------------------
+app.post('/api/upload', async (req: Request, res: Response) => {
+  try {
+    const { filename, dataUrl } = req.body;
+    if (!dataUrl) {
+      return res.status(400).json({ error: 'No image data provided' });
+    }
 
-  // -------------------------------------------------------------
-  // API: File Uploads (Direct file upload from device)
-  // -------------------------------------------------------------
-  app.post('/api/upload', (req: Request, res: Response) => {
+    // 1. Try Supabase Storage first if Supabase is connected
+    if (isSupabaseConnected()) {
+      const supabaseUrl = await uploadImageToSupabase(filename || 'product.jpg', dataUrl);
+      if (supabaseUrl) {
+        return res.json({
+          success: true,
+          url: supabaseUrl,
+          filename: filename || 'product.jpg',
+          storage: 'supabase'
+        });
+      }
+    }
+
+    // 2. Fallback to local / persistent disk storage
+    let publicUrl = dataUrl;
     try {
-      const { filename, dataUrl } = req.body;
-      if (!dataUrl) {
-        return res.status(400).json({ error: 'No data URL provided' });
-      }
-
-      // Check if it's a base64 data url
-      const matches = dataUrl.match(/^data:([A-Za-z-+\/]+);base64,(.+)$/);
-      let buffer: Buffer;
-      let ext = 'jpg';
-
-      if (matches && matches.length === 3) {
-        const mime = matches[1];
-        if (mime.includes('png')) ext = 'png';
-        else if (mime.includes('webp')) ext = 'webp';
-        else if (mime.includes('gif')) ext = 'gif';
-        buffer = Buffer.from(matches[2], 'base64');
-      } else {
-        buffer = Buffer.from(dataUrl, 'base64');
-      }
-
-      const safeName = (filename || 'upload').replace(/[^a-zA-Z0-9_-]/g, '_');
-      const uniqueName = `${Date.now()}_${Math.random().toString(36).substring(2, 8)}_${safeName}.${ext}`;
+      const safeName = (filename || 'image').replace(/[^a-zA-Z0-9_.-]/g, '_');
+      const uniqueName = `${Date.now()}_${safeName}`;
       const filePath = path.join(UPLOADS_DIR, uniqueName);
-
+      const matches = dataUrl.match(/^data:([A-Za-z-+\/]+);base64,(.+)$/);
+      const buffer = matches ? Buffer.from(matches[2], 'base64') : Buffer.from(dataUrl, 'base64');
       fs.writeFileSync(filePath, buffer);
-      const publicUrl = `/uploads/${uniqueName}`;
-
-      return res.json({
-        success: true,
-        url: publicUrl,
-        filename: uniqueName
-      });
-    } catch (err: any) {
-      console.error('Upload error:', err);
-      return res.status(500).json({ error: 'Failed to upload image', details: err?.message });
+      publicUrl = `/uploads/${uniqueName}`;
+    } catch (e) {
+      // In serverless read-only mode, the permanent dataUrl is preserved
     }
-  });
 
-  // -------------------------------------------------------------
-  // API: Admin Authentication
-  // -------------------------------------------------------------
-  app.post('/api/admin/login', (req: Request, res: Response) => {
-    const { email, password } = req.body;
-    // Default admin credentials
-    if ((email === 'admin@atelierv.com' || email === 'admin') && (password === 'admin123' || password === 'admin')) {
-      return res.json({
-        success: true,
-        token: `admin_token_${Date.now()}`,
-        admin: {
-          id: 'adm-01',
-          name: 'Executive Concierge',
-          email: 'admin@atelierv.com',
-          role: 'Super Admin'
+    return res.json({
+      success: true,
+      url: publicUrl,
+      filename: filename || 'image.jpg',
+      storage: 'local'
+    });
+  } catch (err: any) {
+    console.error('Upload error:', err);
+    return res.status(500).json({ error: 'Failed to upload image', details: err?.message });
+  }
+});
+
+// -------------------------------------------------------------
+// API: Admin Authentication & Security
+// -------------------------------------------------------------
+const activeAdminTokens = new Set<string>();
+const JWT_SECRET = process.env.ADMIN_JWT_SECRET || process.env.ADMIN_PASSWORD || 'atelierv_management_secret_key_2026';
+
+export function createAdminToken(email: string): string {
+  const expiresAt = Date.now() + 7 * 24 * 60 * 60 * 1000; // 7 days
+  const payloadStr = JSON.stringify({ email, exp: expiresAt, rand: Math.random().toString(36).substring(2) });
+  const payload = Buffer.from(payloadStr).toString('base64url');
+  const signature = crypto.createHmac('sha256', JWT_SECRET).update(payload).digest('base64url');
+  const token = `${payload}.${signature}`;
+  activeAdminTokens.add(token);
+  return token;
+}
+
+export function verifyAdminToken(req: Request): boolean {
+  const auth = req.headers.authorization;
+  if (!auth) return false;
+  const token = auth.replace(/^Bearer\s+/i, '').trim();
+  if (!token) return false;
+
+  // 1. Check in-memory session cache
+  if (activeAdminTokens.has(token)) return true;
+
+  // 2. Validate cryptographic signature (persists across server restarts)
+  try {
+    const parts = token.split('.');
+    if (parts.length === 2) {
+      const [payload, signature] = parts;
+      const expectedSig = crypto.createHmac('sha256', JWT_SECRET).update(payload).digest('base64url');
+      if (crypto.timingSafeEqual(Buffer.from(signature), Buffer.from(expectedSig))) {
+        const decoded = JSON.parse(Buffer.from(payload, 'base64url').toString('utf8'));
+        if (decoded && decoded.exp && decoded.exp > Date.now()) {
+          activeAdminTokens.add(token);
+          return true;
         }
-      });
+      }
     }
-    return res.status(401).json({ error: 'Invalid credentials. Use admin@atelierv.com / admin123' });
-  });
+  } catch {
+    // Malformed token
+  }
 
-  // -------------------------------------------------------------
-  // API: Products
-  // -------------------------------------------------------------
-  app.get('/api/products', (req: Request, res: Response) => {
-    const db = readDatabase();
+  return false;
+}
+
+export function requireAdmin(req: Request, res: Response, next: () => void) {
+  if (verifyAdminToken(req)) {
+    return next();
+  }
+  return res.status(401).json({ error: 'Unauthorized: Admin authentication token required' });
+}
+
+app.post('/api/admin/login', (req: Request, res: Response) => {
+  const { email, password } = req.body;
+  if (!email || !password) {
+    return res.status(400).json({ error: 'Email and password are required' });
+  }
+
+  const configuredEmail = (process.env.ADMIN_EMAIL || 'admin@atelierv.com').trim();
+  const configuredPassword = (process.env.ADMIN_PASSWORD || 'admin123').trim();
+
+  const isEmailMatch =
+    email.trim().toLowerCase() === configuredEmail.toLowerCase() ||
+    email.trim().toLowerCase() === 'admin';
+  const isPassMatch = password.trim() === configuredPassword;
+
+  if (isEmailMatch && isPassMatch) {
+    const token = createAdminToken(configuredEmail);
+    return res.json({
+      success: true,
+      token,
+      admin: {
+        id: 'adm-01',
+        name: 'Executive Concierge',
+        email: configuredEmail,
+        role: 'Super Admin'
+      }
+    });
+  }
+
+  return res.status(401).json({ error: 'Invalid email or password' });
+});
+
+app.post('/api/admin/logout', (req: Request, res: Response) => {
+  const auth = req.headers.authorization;
+  if (auth) {
+    const token = auth.replace(/^Bearer\s+/i, '').trim();
+    activeAdminTokens.delete(token);
+  }
+  res.json({ success: true });
+});
+
+// -------------------------------------------------------------
+// API: Products (CRUD)
+// -------------------------------------------------------------
+app.get('/api/products', async (req: Request, res: Response) => {
+  try {
+    const db = await readDatabase();
     res.json(db.products);
-  });
+  } catch (err: any) {
+    res.status(500).json({ error: 'Failed to retrieve products' });
+  }
+});
 
-  app.post('/api/products', (req: Request, res: Response) => {
-    const db = readDatabase();
+app.post('/api/products', async (req: Request, res: Response) => {
+  try {
+    const db = await readDatabase();
     const newProduct: Product = req.body;
 
-    // Check SKU uniqueness
-    if (db.products.some(p => p.sku.toLowerCase() === newProduct.sku.toLowerCase())) {
-      return res.status(400).json({ error: `SKU '${newProduct.sku}' is already in use by another product.` });
+    if (!newProduct.name || !newProduct.name.trim()) {
+      return res.status(400).json({ error: 'Product name is required' });
+    }
+
+    if (!newProduct.sku || !newProduct.sku.trim()) {
+      return res.status(400).json({ error: 'Product SKU is required' });
+    }
+
+    // SKU uniqueness check
+    if (db.products.some(p => p.sku.toLowerCase() === newProduct.sku.trim().toLowerCase())) {
+      return res.status(400).json({ error: `SKU '${newProduct.sku}' is already in use by another creation.` });
     }
 
     if (!newProduct.id) {
-      newProduct.id = `prod-${Date.now()}`;
+      newProduct.id = `prod-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`;
     }
     if (!newProduct.slug) {
       newProduct.slug = newProduct.name
@@ -186,14 +349,20 @@ async function startServer() {
 
     newProduct.createdAt = new Date().toISOString();
     newProduct.updatedAt = new Date().toISOString();
+    newProduct.rating = 0;
+    newProduct.reviewCount = 0;
 
     db.products.unshift(newProduct);
-    writeDatabase(db);
+    await writeDatabase(db);
     res.status(201).json(newProduct);
-  });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message || 'Failed to create product' });
+  }
+});
 
-  app.put('/api/products/:id', (req: Request, res: Response) => {
-    const db = readDatabase();
+app.put('/api/products/:id', async (req: Request, res: Response) => {
+  try {
+    const db = await readDatabase();
     const { id } = req.params;
     const index = db.products.findIndex(p => p.id === id);
 
@@ -202,19 +371,23 @@ async function startServer() {
     }
 
     const updatedData: Product = req.body;
-    // SKU uniqueness check excluding current product
-    if (db.products.some(p => p.id !== id && p.sku.toLowerCase() === updatedData.sku.toLowerCase())) {
-      return res.status(400).json({ error: `SKU '${updatedData.sku}' is already used by another product.` });
+    // Check SKU uniqueness excluding this product
+    if (db.products.some(p => p.id !== id && p.sku.toLowerCase() === updatedData.sku.trim().toLowerCase())) {
+      return res.status(400).json({ error: `SKU '${updatedData.sku}' is already assigned to another creation.` });
     }
 
     updatedData.updatedAt = new Date().toISOString();
     db.products[index] = { ...db.products[index], ...updatedData };
-    writeDatabase(db);
+    await writeDatabase(db);
     res.json(db.products[index]);
-  });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message || 'Failed to update product' });
+  }
+});
 
-  app.delete('/api/products/:id', (req: Request, res: Response) => {
-    const db = readDatabase();
+app.delete('/api/products/:id', async (req: Request, res: Response) => {
+  try {
+    const db = await readDatabase();
     const { id } = req.params;
     const index = db.products.findIndex(p => p.id === id);
 
@@ -223,12 +396,16 @@ async function startServer() {
     }
 
     db.products.splice(index, 1);
-    writeDatabase(db);
+    await writeDatabase(db);
     res.json({ success: true, message: 'Product deleted' });
-  });
+  } catch (err: any) {
+    res.status(500).json({ error: 'Failed to delete product' });
+  }
+});
 
-  app.post('/api/products/:id/duplicate', (req: Request, res: Response) => {
-    const db = readDatabase();
+app.post('/api/products/:id/duplicate', async (req: Request, res: Response) => {
+  try {
+    const db = await readDatabase();
     const { id } = req.params;
     const original = db.products.find(p => p.id === id);
 
@@ -253,20 +430,28 @@ async function startServer() {
     };
 
     db.products.unshift(duplicate);
-    writeDatabase(db);
+    await writeDatabase(db);
     res.status(201).json(duplicate);
-  });
+  } catch (err: any) {
+    res.status(500).json({ error: 'Failed to duplicate product' });
+  }
+});
 
-  // -------------------------------------------------------------
-  // API: Categories
-  // -------------------------------------------------------------
-  app.get('/api/categories', (req: Request, res: Response) => {
-    const db = readDatabase();
+// -------------------------------------------------------------
+// API: Categories
+// -------------------------------------------------------------
+app.get('/api/categories', async (req: Request, res: Response) => {
+  try {
+    const db = await readDatabase();
     res.json(db.categories);
-  });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to fetch categories' });
+  }
+});
 
-  app.post('/api/categories', (req: Request, res: Response) => {
-    const db = readDatabase();
+app.post('/api/categories', async (req: Request, res: Response) => {
+  try {
+    const db = await readDatabase();
     const newCat: Category = req.body;
     if (!newCat.id) newCat.id = `cat-${Date.now()}`;
     if (!newCat.slug) {
@@ -276,56 +461,118 @@ async function startServer() {
         .replace(/(^-|-$)+/g, '');
     }
     db.categories.push(newCat);
-    writeDatabase(db);
+    await writeDatabase(db);
     res.status(201).json(newCat);
-  });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to create category' });
+  }
+});
 
-  app.put('/api/categories/:id', (req: Request, res: Response) => {
-    const db = readDatabase();
+app.put('/api/categories/:id', async (req: Request, res: Response) => {
+  try {
+    const db = await readDatabase();
     const { id } = req.params;
     const index = db.categories.findIndex(c => c.id === id);
     if (index === -1) return res.status(404).json({ error: 'Category not found' });
     db.categories[index] = { ...db.categories[index], ...req.body };
-    writeDatabase(db);
+    await writeDatabase(db);
     res.json(db.categories[index]);
-  });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to update category' });
+  }
+});
 
-  app.delete('/api/categories/:id', (req: Request, res: Response) => {
-    const db = readDatabase();
+app.delete('/api/categories/:id', async (req: Request, res: Response) => {
+  try {
+    const db = await readDatabase();
     const { id } = req.params;
     const index = db.categories.findIndex(c => c.id === id);
     if (index === -1) return res.status(404).json({ error: 'Category not found' });
     db.categories.splice(index, 1);
-    writeDatabase(db);
+    await writeDatabase(db);
     res.json({ success: true });
-  });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to delete category' });
+  }
+});
 
-  // -------------------------------------------------------------
-  // API: Orders & Checkout
-  // -------------------------------------------------------------
-  app.get('/api/orders', (req: Request, res: Response) => {
-    const db = readDatabase();
+// -------------------------------------------------------------
+// API: Orders & Checkout (Strict Indian Customer Validation)
+// -------------------------------------------------------------
+app.get('/api/orders', requireAdmin, async (req: Request, res: Response) => {
+  try {
+    if (isSupabaseConnected()) {
+      const supabaseOrders = await getOrdersFromSupabase();
+      if (supabaseOrders !== null) {
+        return res.json(supabaseOrders);
+      }
+    }
+    const db = await readDatabase();
     res.json(db.orders);
-  });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to fetch orders' });
+  }
+});
 
-  app.post('/api/orders', (req: Request, res: Response) => {
-    const db = readDatabase();
-    const orderData = req.body;
+app.post('/api/orders', async (req: Request, res: Response) => {
+  try {
+    const db = await readDatabase();
+    const { customer, items, pricing, payment } = req.body;
 
-    const dateStr = new Date().toISOString().slice(0, 10).replace(/-/g, '');
-    const randSeq = Math.floor(1000 + Math.random() * 9000);
-    const orderId = `ORD-${dateStr}-${randSeq}`;
+    // Validate Customer Information
+    if (!customer?.fullName || customer.fullName.trim().length < 2) {
+      return res.status(400).json({ error: 'Valid Full Legal Name is required' });
+    }
 
-    const newOrder: Order = {
-      ...orderData,
-      id: orderId,
-      status: 'Confirmed',
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString()
-    };
+    const cleanPhone = (customer.mobileNumber || '').replace(/[^0-9]/g, '');
+    if (cleanPhone.length < 10) {
+      return res.status(400).json({ error: 'Valid 10-digit Indian Mobile Number is required' });
+    }
 
-    // Deduct inventory
-    for (const item of newOrder.items) {
+    if (!customer?.address || customer.address.trim().length < 5) {
+      return res.status(400).json({ error: 'Full Delivery Address is required' });
+    }
+
+    if (!customer?.city || !customer.city.trim()) {
+      return res.status(400).json({ error: 'City is required' });
+    }
+
+    if (!customer?.state || !customer.state.trim()) {
+      return res.status(400).json({ error: 'State is required' });
+    }
+
+    const cleanPincode = (customer.pincode || '').replace(/[^0-9]/g, '');
+    if (cleanPincode.length !== 6) {
+      return res.status(400).json({ error: 'Valid 6-digit Indian Pincode is required' });
+    }
+
+    if (!items || !Array.isArray(items) || items.length === 0) {
+      return res.status(400).json({ error: 'Order must contain at least one item' });
+    }
+
+    // Inventory Check & Stock Deduction
+    for (const item of items) {
+      const prod = db.products.find(p => p.id === item.productId);
+      if (!prod) {
+        return res.status(400).json({ error: `Creation '${item.productName}' no longer exists in catalog.` });
+      }
+
+      if (item.variantId && prod.variants) {
+        const variant = prod.variants.find(v => v.id === item.variantId);
+        if (variant && variant.stock < item.quantity) {
+          return res.status(400).json({
+            error: `Only ${variant.stock} units available for ${item.productName} (${variant.name}). Please adjust quantity.`
+          });
+        }
+      } else if (prod.stock < item.quantity) {
+        return res.status(400).json({
+          error: `Only ${prod.stock} units available for ${prod.name}. Please adjust quantity.`
+        });
+      }
+    }
+
+    // Deduct stock safely (prevent negative inventory)
+    for (const item of items) {
       const prod = db.products.find(p => p.id === item.productId);
       if (prod) {
         prod.stock = Math.max(0, prod.stock - item.quantity);
@@ -338,32 +585,65 @@ async function startServer() {
       }
     }
 
-    // Update or add customer profile
+    // Generate Unique Order ID
+    const dateStr = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+    const randSeq = Math.floor(1000 + Math.random() * 9000);
+    const orderId = `ORD-${dateStr}-${randSeq}`;
+
+    const newOrder: Order = {
+      id: orderId,
+      customer: {
+        fullName: customer.fullName.trim(),
+        mobileNumber: cleanPhone.slice(-10),
+        address: customer.address.trim(),
+        city: customer.city.trim(),
+        state: customer.state.trim(),
+        pincode: cleanPincode
+      },
+      items,
+      pricing: {
+        subtotal: pricing?.subtotal || 0,
+        discount: pricing?.discount || 0,
+        couponCode: pricing?.couponCode,
+        shipping: pricing?.shipping || 0,
+        grandTotal: pricing?.grandTotal || 0
+      },
+      payment: {
+        method: payment?.method || 'cod',
+        status: payment?.method === 'online' ? 'paid' : 'pending',
+        transactionId: payment?.transactionId || `COD_${Date.now()}`
+      },
+      status: 'Pending',
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    };
+
+    // Update customer registry
     const existingCust = db.customers.find(
-      c => c.email.toLowerCase() === newOrder.customer.email.toLowerCase()
+      c => c.phone === newOrder.customer.mobileNumber
     );
     if (existingCust) {
       existingCust.totalOrders += 1;
       existingCust.totalSpent += newOrder.pricing.grandTotal;
       existingCust.lastOrderDate = new Date().toISOString().slice(0, 10);
-      if (existingCust.totalSpent > 2000) existingCust.status = 'VIP';
+      if (existingCust.totalSpent > 50000) existingCust.status = 'VIP';
     } else {
       const newCust: CustomerProfile = {
         id: `cust-${Date.now()}`,
         fullName: newOrder.customer.fullName,
-        email: newOrder.customer.email,
-        phone: newOrder.customer.phone,
+        email: `${newOrder.customer.mobileNumber}@patron.atelierv.com`,
+        phone: newOrder.customer.mobileNumber,
         city: newOrder.customer.city,
-        country: newOrder.customer.country,
+        country: 'India',
         totalOrders: 1,
         totalSpent: newOrder.pricing.grandTotal,
         lastOrderDate: new Date().toISOString().slice(0, 10),
-        status: newOrder.pricing.grandTotal > 2000 ? 'VIP' : 'Active'
+        status: newOrder.pricing.grandTotal > 50000 ? 'VIP' : 'Active'
       };
       db.customers.unshift(newCust);
     }
 
-    // If coupon used, increment coupon usage count
+    // Increment coupon redemptions
     if (newOrder.pricing.couponCode) {
       const coupon = db.coupons.find(
         c => c.code.toUpperCase() === newOrder.pricing.couponCode?.toUpperCase()
@@ -373,43 +653,73 @@ async function startServer() {
       }
     }
 
+    // 1. Persist to local database
     db.orders.unshift(newOrder);
-    writeDatabase(db);
-    res.status(201).json(newOrder);
-  });
+    await writeDatabase(db);
 
-  app.put('/api/orders/:id', (req: Request, res: Response) => {
-    const db = readDatabase();
+    // 2. Persist to Supabase if connected
+    if (isSupabaseConnected()) {
+      await saveOrderToSupabase(newOrder);
+    }
+
+    res.status(201).json(newOrder);
+  } catch (err: any) {
+    console.error('Order creation error:', err);
+    res.status(500).json({ error: err.message || 'Failed to finalize and save order' });
+  }
+});
+
+app.put('/api/orders/:id', requireAdmin, async (req: Request, res: Response) => {
+  try {
+    const db = await readDatabase();
     const { id } = req.params;
     const index = db.orders.findIndex(o => o.id === id);
     if (index === -1) return res.status(404).json({ error: 'Order not found' });
+
     db.orders[index] = {
       ...db.orders[index],
       ...req.body,
       updatedAt: new Date().toISOString()
     };
-    writeDatabase(db);
+    await writeDatabase(db);
+
+    if (isSupabaseConnected()) {
+      await updateOrderInSupabase(id, req.body);
+    }
+
     res.json(db.orders[index]);
-  });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to update order' });
+  }
+});
 
-  // -------------------------------------------------------------
-  // API: Customers
-  // -------------------------------------------------------------
-  app.get('/api/customers', (req: Request, res: Response) => {
-    const db = readDatabase();
+// -------------------------------------------------------------
+// API: Customers
+// -------------------------------------------------------------
+app.get('/api/customers', requireAdmin, async (req: Request, res: Response) => {
+  try {
+    const db = await readDatabase();
     res.json(db.customers);
-  });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to fetch customer directory' });
+  }
+});
 
-  // -------------------------------------------------------------
-  // API: Coupons
-  // -------------------------------------------------------------
-  app.get('/api/coupons', (req: Request, res: Response) => {
-    const db = readDatabase();
+// -------------------------------------------------------------
+// API: Coupons
+// -------------------------------------------------------------
+app.get('/api/coupons', async (req: Request, res: Response) => {
+  try {
+    const db = await readDatabase();
     res.json(db.coupons);
-  });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to fetch coupons' });
+  }
+});
 
-  app.post('/api/coupons', (req: Request, res: Response) => {
-    const db = readDatabase();
+app.post('/api/coupons', async (req: Request, res: Response) => {
+  try {
+    const db = await readDatabase();
     const newCoupon: Coupon = {
       ...req.body,
       id: `coup-${Date.now()}`,
@@ -417,32 +727,44 @@ async function startServer() {
       usedCount: 0
     };
     db.coupons.push(newCoupon);
-    writeDatabase(db);
+    await writeDatabase(db);
     res.status(201).json(newCoupon);
-  });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to create coupon' });
+  }
+});
 
-  app.put('/api/coupons/:id', (req: Request, res: Response) => {
-    const db = readDatabase();
+app.put('/api/coupons/:id', async (req: Request, res: Response) => {
+  try {
+    const db = await readDatabase();
     const { id } = req.params;
     const index = db.coupons.findIndex(c => c.id === id);
     if (index === -1) return res.status(404).json({ error: 'Coupon not found' });
     db.coupons[index] = { ...db.coupons[index], ...req.body };
-    writeDatabase(db);
+    await writeDatabase(db);
     res.json(db.coupons[index]);
-  });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to update coupon' });
+  }
+});
 
-  app.delete('/api/coupons/:id', (req: Request, res: Response) => {
-    const db = readDatabase();
+app.delete('/api/coupons/:id', async (req: Request, res: Response) => {
+  try {
+    const db = await readDatabase();
     const { id } = req.params;
     const index = db.coupons.findIndex(c => c.id === id);
     if (index === -1) return res.status(404).json({ error: 'Coupon not found' });
     db.coupons.splice(index, 1);
-    writeDatabase(db);
+    await writeDatabase(db);
     res.json({ success: true });
-  });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to delete coupon' });
+  }
+});
 
-  app.post('/api/coupons/validate', (req: Request, res: Response) => {
-    const db = readDatabase();
+app.post('/api/coupons/validate', async (req: Request, res: Response) => {
+  try {
+    const db = await readDatabase();
     const { code, subtotal } = req.body;
     if (!code) return res.status(400).json({ error: 'Coupon code required' });
 
@@ -461,7 +783,7 @@ async function startServer() {
     }
     if (subtotal < coupon.minOrderValue) {
       return res.status(400).json({
-        error: `Minimum order value of $${coupon.minOrderValue} required for this coupon`
+        error: `Minimum order value of ₹${coupon.minOrderValue} required for this coupon`
       });
     }
 
@@ -482,32 +804,40 @@ async function startServer() {
       discountType: coupon.discountType,
       discountValue: coupon.discountValue
     });
-  });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to validate coupon' });
+  }
+});
 
-  // -------------------------------------------------------------
-  // API: Reviews
-  // -------------------------------------------------------------
-  app.get('/api/reviews', (req: Request, res: Response) => {
-    const db = readDatabase();
+// -------------------------------------------------------------
+// API: Reviews (Real reviews only)
+// -------------------------------------------------------------
+app.get('/api/reviews', async (req: Request, res: Response) => {
+  try {
+    const db = await readDatabase();
     const { productId } = req.query;
     if (productId) {
-      const filtered = db.reviews.filter(r => r.productId === productId);
+      const filtered = db.reviews.filter(r => r.productId === productId && r.status === 'approved');
       return res.json(filtered);
     }
     res.json(db.reviews);
-  });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to fetch reviews' });
+  }
+});
 
-  app.post('/api/reviews', (req: Request, res: Response) => {
-    const db = readDatabase();
+app.post('/api/reviews', async (req: Request, res: Response) => {
+  try {
+    const db = await readDatabase();
     const newReview: Review = {
       ...req.body,
       id: `rev-${Date.now()}`,
-      status: 'approved', // auto-approve for responsive UX
+      status: 'approved',
       createdAt: new Date().toISOString().slice(0, 10)
     };
     db.reviews.unshift(newReview);
 
-    // Recalculate product rating
+    // Recalculate genuine rating
     const prodReviews = db.reviews.filter(r => r.productId === newReview.productId && r.status === 'approved');
     const prod = db.products.find(p => p.id === newReview.productId);
     if (prod && prodReviews.length > 0) {
@@ -516,63 +846,92 @@ async function startServer() {
       prod.reviewCount = prodReviews.length;
     }
 
-    writeDatabase(db);
+    await writeDatabase(db);
     res.status(201).json(newReview);
-  });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to submit review' });
+  }
+});
 
-  app.put('/api/reviews/:id', (req: Request, res: Response) => {
-    const db = readDatabase();
+app.put('/api/reviews/:id', async (req: Request, res: Response) => {
+  try {
+    const db = await readDatabase();
     const { id } = req.params;
     const index = db.reviews.findIndex(r => r.id === id);
     if (index === -1) return res.status(404).json({ error: 'Review not found' });
     db.reviews[index] = { ...db.reviews[index], ...req.body };
-    writeDatabase(db);
+    await writeDatabase(db);
     res.json(db.reviews[index]);
-  });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to moderate review' });
+  }
+});
 
-  // -------------------------------------------------------------
-  // API: Settings & CMS Homepage
-  // -------------------------------------------------------------
-  app.get('/api/settings', (req: Request, res: Response) => {
-    const db = readDatabase();
+// -------------------------------------------------------------
+// API: Store Settings & CMS
+// -------------------------------------------------------------
+app.get('/api/settings', async (req: Request, res: Response) => {
+  try {
+    const db = await readDatabase();
     res.json(db.settings);
-  });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to fetch settings' });
+  }
+});
 
-  app.put('/api/settings', (req: Request, res: Response) => {
-    const db = readDatabase();
+app.put('/api/settings', async (req: Request, res: Response) => {
+  try {
+    const db = await readDatabase();
     db.settings = { ...db.settings, ...req.body };
-    writeDatabase(db);
+    await writeDatabase(db);
     res.json(db.settings);
-  });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to update settings' });
+  }
+});
 
-  // -------------------------------------------------------------
-  // Frontend Serving (Vite in Dev, Dist in Production)
-  // -------------------------------------------------------------
-  const isProduction = process.env.NODE_ENV === 'production';
+// -------------------------------------------------------------
+// Server Lifecycle & Static Frontend Integration
+// -------------------------------------------------------------
+async function setupFrontend() {
+  const distPath = path.join(__dirname, 'dist');
+  const distExists = fs.existsSync(distPath);
+  const isProduction = process.env.NODE_ENV === 'production' || Boolean(process.env.VERCEL) || Boolean(process.env.K_SERVICE);
 
-  if (!isProduction) {
-    const vite = await createViteServer({
-      server: {
-        middlewareMode: true,
-        port: PORT,
-        host: '0.0.0.0'
-      },
-      appType: 'spa'
-    });
-    app.use(vite.middlewares);
-  } else {
-    const distPath = path.join(__dirname, 'dist');
+  if (!isProduction && !distExists) {
+    try {
+      const vite = await createViteServer({
+        server: {
+          middlewareMode: true,
+          port: PORT,
+          host: '0.0.0.0'
+        },
+        appType: 'spa'
+      });
+      app.use(vite.middlewares);
+    } catch (viteErr) {
+      console.warn('[Atelier V] Vite middleware notice:', viteErr);
+    }
+  } else if (distExists) {
     app.use(express.static(distPath));
     app.get('*', (req: Request, res: Response) => {
+      if (req.path.startsWith('/api') || req.path.startsWith('/uploads') || req.path.startsWith('/images')) {
+        return res.status(404).json({ error: 'Endpoint not found' });
+      }
       res.sendFile(path.join(distPath, 'index.html'));
     });
   }
+}
 
-  app.listen(PORT, '0.0.0.0', () => {
-    console.log(`[Atelier V] Server listening on http://0.0.0.0:${PORT}`);
+// In standard Node / container environment, initialize and listen
+if (!process.env.VERCEL) {
+  setupFrontend().then(() => {
+    app.listen(PORT, '0.0.0.0', () => {
+      console.log(`[Atelier V] Server listening on http://0.0.0.0:${PORT}`);
+    });
+  }).catch(err => {
+    console.error('Server startup error:', err);
   });
 }
 
-startServer().catch(err => {
-  console.error('Fatal server startup error:', err);
-});
+export default app;

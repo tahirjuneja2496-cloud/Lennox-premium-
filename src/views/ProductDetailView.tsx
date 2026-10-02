@@ -12,7 +12,8 @@ import {
   Sparkles,
   ChevronRight,
   ZoomIn,
-  MessageSquare
+  MessageSquare,
+  Facebook
 } from 'lucide-react';
 import { useStore } from '../context/StoreContext';
 import { Product, ProductVariant, Review } from '../types';
@@ -49,7 +50,7 @@ export const ProductDetailView: React.FC<ProductDetailViewProps> = ({
   const [sharePopoverOpen, setSharePopoverOpen] = useState(false);
   const [activeTab, setActiveTab] = useState<'specs' | 'provenance' | 'shipping'>('specs');
   
-  // Reviews state
+  // Real reviews state
   const [reviews, setReviews] = useState<Review[]>([]);
   const [newReviewRating, setNewReviewRating] = useState(5);
   const [newReviewTitle, setNewReviewTitle] = useState('');
@@ -66,20 +67,32 @@ export const ProductDetailView: React.FC<ProductDetailViewProps> = ({
   const purchaseButtonRef = useRef<HTMLButtonElement>(null);
   const [showMobileStickyBar, setShowMobileStickyBar] = useState(false);
 
+  const cleanUrl = (url?: string) => {
+    if (!url) return '';
+    if (url.startsWith('/src/assets/images/')) {
+      return url.replace('/src/assets/images/', '/images/');
+    }
+    return url;
+  };
+
+  const images = (product.images && product.images.length > 0
+    ? product.images.map(cleanUrl)
+    : ['/images/hero_luxury_editorial_1790850435776.jpg']).filter(Boolean);
+  
+  const activeImage = images[activeImageIndex] || images[0] || '/images/hero_luxury_editorial_1790850435776.jpg';
+
   useEffect(() => {
-    // Scroll to top on product change
     window.scrollTo({ top: 0, behavior: 'smooth' });
     setActiveImageIndex(0);
     setSelectedVariant(product.variants?.[0]);
     setQuantity(1);
 
-    // Update document title & SEO
     document.title = `${product.name} | Atelier V`;
 
-    // Fetch reviews
-    api.getReviews(product.id).then(setReviews).catch(console.error);
+    // Fetch real database reviews for this product
+    api.getReviews(product.id).then(setReviews).catch(() => setReviews([]));
 
-    // Dynamic JSON-LD structured data injection for SEO
+    // Dynamic JSON-LD structured data for SEO
     const schemaId = 'product-jsonld';
     let scriptTag = document.getElementById(schemaId) as HTMLScriptElement | null;
     if (!scriptTag) {
@@ -93,7 +106,7 @@ export const ProductDetailView: React.FC<ProductDetailViewProps> = ({
       '@context': 'https://schema.org/',
       '@type': 'Product',
       name: product.name,
-      image: product.images,
+      image: images,
       description: product.description,
       sku: selectedVariant?.sku || product.sku,
       brand: {
@@ -103,23 +116,13 @@ export const ProductDetailView: React.FC<ProductDetailViewProps> = ({
       offers: {
         '@type': 'Offer',
         url: window.location.href,
-        priceCurrency: 'USD',
+        priceCurrency: 'INR',
         price: currentPrice,
         availability: product.stock > 0 ? 'https://schema.org/InStock' : 'https://schema.org/OutOfStock'
-      },
-      aggregateRating: product.reviewCount > 0 ? {
-        '@type': 'AggregateRating',
-        ratingValue: product.rating,
-        reviewCount: product.reviewCount
-      } : undefined
+      }
     });
-
-    return () => {
-      // clean up script on unmount if needed
-    };
   }, [product]);
 
-  // Observer for mobile sticky buy bar
   useEffect(() => {
     const observer = new IntersectionObserver(
       ([entry]) => {
@@ -141,12 +144,6 @@ export const ProductDetailView: React.FC<ProductDetailViewProps> = ({
   const isOutOfStock = currentStock <= 0;
   const isLowStock = currentStock > 0 && currentStock <= (product.lowStockThreshold || 3);
 
-  const images = product.images && product.images.length > 0
-    ? product.images
-    : ['/src/assets/images/hero_luxury_editorial_1790850435776.jpg'];
-  const activeImage = images[activeImageIndex] || images[0];
-
-  // Mouse move for zoom
   const handleMouseMove = (e: React.MouseEvent<HTMLDivElement>) => {
     if (!imageContainerRef.current) return;
     const rect = imageContainerRef.current.getBoundingClientRect();
@@ -156,10 +153,12 @@ export const ProductDetailView: React.FC<ProductDetailViewProps> = ({
   };
 
   const handleAddToCart = () => {
+    if (isOutOfStock) return;
     addToCart(product, selectedVariant, quantity);
   };
 
   const handleInstantBuy = () => {
+    if (isOutOfStock) return;
     addToCart(product, selectedVariant, quantity);
     onCheckout();
   };
@@ -180,8 +179,6 @@ export const ProductDetailView: React.FC<ProductDetailViewProps> = ({
       shareUrl = `https://api.whatsapp.com/send?text=${text}%20${url}`;
     } else if (channel === 'twitter') {
       shareUrl = `https://twitter.com/intent/tweet?text=${text}&url=${url}`;
-    } else if (channel === 'telegram') {
-      shareUrl = `https://t.me/share/url?url=${url}&text=${text}`;
     } else if (channel === 'facebook') {
       shareUrl = `https://www.facebook.com/sharer/sharer.php?u=${url}`;
     } else if (channel === 'native' && navigator.share) {
@@ -231,9 +228,8 @@ export const ProductDetailView: React.FC<ProductDetailViewProps> = ({
     }
   };
 
-  // Related products in same category
   const relatedProducts = products
-    .filter((p) => p.id !== product.id && p.category === product.category)
+    .filter((p) => p.id !== product.id && p.category === product.category && p.published)
     .slice(0, 3);
 
   return (
@@ -255,13 +251,13 @@ export const ProductDetailView: React.FC<ProductDetailViewProps> = ({
         <span className="text-[#1A1A18] truncate max-w-[200px]">{product.name}</span>
       </nav>
 
-      {/* Main Contiguous Purchase Stage (Two columns) */}
+      {/* Main Contiguous Purchase Stage */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-10 lg:gap-16">
         
-        {/* Gallery Column (7 cols on desktop) */}
+        {/* Gallery Column (7 cols) */}
         <div className="lg:col-span-7 flex flex-col-reverse md:flex-row gap-4">
           
-          {/* Thumbnails (vertical on desktop, horizontal on mobile) */}
+          {/* Thumbnails */}
           {images.length > 1 && (
             <div className="flex md:flex-col gap-3 overflow-x-auto md:overflow-y-auto shrink-0 py-1">
               {images.map((img, idx) => (
@@ -320,7 +316,7 @@ export const ProductDetailView: React.FC<ProductDetailViewProps> = ({
           </div>
         </div>
 
-        {/* Contiguous Purchase Module (5 cols on desktop, sticky) */}
+        {/* Contiguous Purchase Module (5 cols) */}
         <div className="lg:col-span-5 flex flex-col justify-start space-y-6">
           
           {/* Header metadata */}
@@ -334,21 +330,23 @@ export const ProductDetailView: React.FC<ProductDetailViewProps> = ({
               {product.name}
             </h1>
 
-            {/* Ratings Summary */}
-            <div className="mt-2.5 flex items-center gap-2">
-              <div className="flex text-amber-900 gap-0.5">
-                {[...Array(5)].map((_, i) => (
-                  <Star
-                    key={i}
-                    className={`w-3.5 h-3.5 ${
-                      i < Math.floor(product.rating) ? 'fill-current' : 'text-[#D4D4CD]'
-                    }`}
-                  />
-                ))}
+            {/* Genuine Ratings Summary if available */}
+            {reviews.length > 0 && (
+              <div className="mt-2.5 flex items-center gap-2">
+                <div className="flex text-amber-900 gap-0.5">
+                  {[...Array(5)].map((_, i) => (
+                    <Star
+                      key={i}
+                      className={`w-3.5 h-3.5 ${
+                        i < Math.floor(product.rating) ? 'fill-current' : 'text-[#D4D4CD]'
+                      }`}
+                    />
+                  ))}
+                </div>
+                <span className="text-xs font-semibold tabular-nums text-[#1A1A18]">{product.rating}</span>
+                <span className="text-xs text-[#71716A]">({reviews.length} appraisals)</span>
               </div>
-              <span className="text-xs font-semibold tabular-nums text-[#1A1A18]">{product.rating}</span>
-              <span className="text-xs text-[#71716A]">({reviews.length} reviews)</span>
-            </div>
+            )}
           </div>
 
           {/* Pricing Module */}
@@ -371,7 +369,7 @@ export const ProductDetailView: React.FC<ProductDetailViewProps> = ({
           {/* Stock Indicator */}
           <div className="text-xs">
             {isOutOfStock ? (
-              <span className="text-rose-700 font-medium uppercase tracking-wider">
+              <span className="text-rose-700 font-semibold uppercase tracking-wider">
                 Currently Out of Stock
               </span>
             ) : isLowStock ? (
@@ -380,7 +378,7 @@ export const ProductDetailView: React.FC<ProductDetailViewProps> = ({
               </span>
             ) : (
               <span className="text-emerald-800 font-medium uppercase tracking-wider">
-                In Stock · Ready for Dispatch
+                In Stock · Ready for Immediate Dispatch
               </span>
             )}
           </div>
@@ -428,7 +426,7 @@ export const ProductDetailView: React.FC<ProductDetailViewProps> = ({
             <div className="flex items-center border border-[#1A1A18]/20 bg-white">
               <button
                 onClick={() => setQuantity((q) => Math.max(1, q - 1))}
-                disabled={quantity <= 1}
+                disabled={quantity <= 1 || isOutOfStock}
                 className="px-3 py-1.5 text-xs text-[#1A1A18] hover:bg-[#F4F4F0] disabled:opacity-30 cursor-pointer"
               >
                 -
@@ -438,7 +436,7 @@ export const ProductDetailView: React.FC<ProductDetailViewProps> = ({
               </span>
               <button
                 onClick={() => setQuantity((q) => Math.min(currentStock, q + 1))}
-                disabled={quantity >= currentStock}
+                disabled={quantity >= currentStock || isOutOfStock}
                 className="px-3 py-1.5 text-xs text-[#1A1A18] hover:bg-[#F4F4F0] disabled:opacity-30 cursor-pointer"
               >
                 +
@@ -474,9 +472,9 @@ export const ProductDetailView: React.FC<ProductDetailViewProps> = ({
             <button
               onClick={handleInstantBuy}
               disabled={isOutOfStock}
-              className="w-full py-3.5 border border-[#1A1A18] hover:bg-[#1A1A18] hover:text-[#FBFBF9] text-[#1A1A18] text-xs uppercase tracking-widest font-semibold transition-colors cursor-pointer"
+              className="w-full py-3.5 border border-[#1A1A18] hover:bg-[#1A1A18] hover:text-[#FBFBF9] text-[#1A1A18] text-xs uppercase tracking-widest font-semibold transition-colors cursor-pointer disabled:opacity-50"
             >
-              Instant Purchase
+              Instant Purchase (COD)
             </button>
           </div>
 
@@ -511,16 +509,17 @@ export const ProductDetailView: React.FC<ProductDetailViewProps> = ({
                     <span>WhatsApp</span>
                   </button>
                   <button
+                    onClick={() => handleShare('facebook')}
+                    className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-[#1A1A18]/10 hover:border-[#1A1A18] text-[#1A1A18] cursor-pointer"
+                  >
+                    <Facebook className="w-3.5 h-3.5" />
+                    <span>Facebook</span>
+                  </button>
+                  <button
                     onClick={() => handleShare('twitter')}
                     className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-[#1A1A18]/10 hover:border-[#1A1A18] text-[#1A1A18] cursor-pointer"
                   >
                     <span>X / Twitter</span>
-                  </button>
-                  <button
-                    onClick={() => handleShare('telegram')}
-                    className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-[#1A1A18]/10 hover:border-[#1A1A18] text-[#1A1A18] cursor-pointer"
-                  >
-                    <span>Telegram</span>
                   </button>
                   {typeof navigator !== 'undefined' && 'share' in navigator && (
                     <button
@@ -540,15 +539,15 @@ export const ProductDetailView: React.FC<ProductDetailViewProps> = ({
           <div className="pt-6 border-t border-[#1A1A18]/10 space-y-3 text-xs text-[#52524D]">
             <div className="flex items-center gap-3">
               <Truck className="w-4 h-4 text-[#1A1A18] shrink-0" />
-              <span>Complimentary insured express delivery on orders over $250</span>
+              <span>Complimentary insured express courier on orders above ₹1,999</span>
             </div>
             <div className="flex items-center gap-3">
               <ShieldCheck className="w-4 h-4 text-[#1A1A18] shrink-0" />
-              <span>Bespoke presentation packaging & Certificate of Authenticity</span>
+              <span>Authentic Certificate of Provenance & Bespoke Packaging</span>
             </div>
             <div className="flex items-center gap-3">
               <RotateCcw className="w-4 h-4 text-[#1A1A18] shrink-0" />
-              <span>Complimentary 30-day continental returns and exchanges</span>
+              <span>Complimentary 7-day doorstep inspection & exchange</span>
             </div>
           </div>
 
@@ -582,7 +581,7 @@ export const ProductDetailView: React.FC<ProductDetailViewProps> = ({
               activeTab === 'shipping' ? 'text-[#1A1A18]' : 'text-[#71716A] hover:text-[#1A1A18]'
             }`}
           >
-            <span>Shipping & White Glove Concierge</span>
+            <span>Delivery & Courier</span>
             {activeTab === 'shipping' && <span className="absolute bottom-0 left-0 w-full h-[2px] bg-[#1A1A18]" />}
           </button>
         </div>
@@ -607,10 +606,10 @@ export const ProductDetailView: React.FC<ProductDetailViewProps> = ({
           {activeTab === 'provenance' && (
             <div className="space-y-4">
               <p>
-                Every edition is developed in collaboration with generational European workshops that have preserved their craft techniques for over a century. From hand-chiseled travertine to double-faced Mongolian cashmere stitched with invisible blind hems, our creators work with zero artificial shortcuts.
+                Every edition is developed with select workshops dedicated to preserving generational techniques. Hand-chiseled stone, solid patinated bronze, double-faced cashmere, and vegetable-tanned full-grain bridle leather are crafted without synthetic shortcuts.
               </p>
               <p>
-                Each item bears an engraved or stamped provenance registry mark with its individual production ledger number.
+                Each creation bears its individual provenance inscription mark.
               </p>
             </div>
           )}
@@ -618,22 +617,22 @@ export const ProductDetailView: React.FC<ProductDetailViewProps> = ({
           {activeTab === 'shipping' && (
             <div className="space-y-4">
               <p>
-                We offer worldwide express air courier delivery via DHL Express Worldwide and FedEx Priority. All pieces are packed in custom wooden crates or bonded archival boxes to ensure zero transit vibration.
+                We dispatch through priority air couriers including Blue Dart and Delhivery Express. All pieces are packed in reinforced bonded boxes to eliminate transit vibration.
               </p>
               <p>
-                Transit times: Continental Europe: 1–2 business days; North America: 2–3 business days; Asia-Pacific: 3–4 business days.
+                Metropolitan delivery: 2–3 business days. Regional delivery: 3–5 business days. Cash on Delivery available across all serviceable Indian pincodes.
               </p>
             </div>
           )}
         </div>
       </section>
 
-      {/* Customer Reviews & Ratings Section */}
+      {/* Customer Appraisals Section (Genuine only) */}
       <section className="mt-16 pt-12 border-t border-[#1A1A18]/10">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-8">
           <div>
-            <span className="text-xs uppercase tracking-widest text-[#71716A]">Appraisals</span>
-            <h3 className="text-2xl font-serif text-[#1A1A18]">Patron Reviews ({reviews.length})</h3>
+            <span className="text-xs uppercase tracking-widest text-[#71716A]">Patron Appraisals</span>
+            <h3 className="text-2xl font-serif text-[#1A1A18]">Customer Reviews ({reviews.length})</h3>
           </div>
         </div>
 
@@ -642,9 +641,12 @@ export const ProductDetailView: React.FC<ProductDetailViewProps> = ({
           {/* Review List */}
           <div className="lg:col-span-7 space-y-6">
             {reviews.length === 0 ? (
-              <p className="text-xs text-[#71716A] italic">
-                Be the first verified patron to leave an appraisal for this creation.
-              </p>
+              <div className="p-8 bg-[#F4F4F0]/60 border border-[#1A1A18]/10 text-center">
+                <p className="font-serif text-lg text-[#1A1A18]">No customer reviews yet.</p>
+                <p className="mt-1 text-xs text-[#71716A]">
+                  Verified patrons can share their appraisal and impressions below.
+                </p>
+              </div>
             ) : (
               reviews.map((rev) => (
                 <div key={rev.id} className="p-6 bg-[#F4F4F0] border border-[#1A1A18]/5 space-y-3">
@@ -684,7 +686,7 @@ export const ProductDetailView: React.FC<ProductDetailViewProps> = ({
           {/* Submit Review Form */}
           <div className="lg:col-span-5 p-6 bg-white border border-[#1A1A18]/10 space-y-4">
             <h4 className="text-sm uppercase tracking-wider font-semibold text-[#1A1A18]">
-              Submit an Appraisal
+              Leave an Appraisal
             </h4>
             <form onSubmit={handleReviewSubmit} className="space-y-4 text-xs">
               <div>
@@ -712,7 +714,7 @@ export const ProductDetailView: React.FC<ProductDetailViewProps> = ({
                 <input
                   type="text"
                   required
-                  placeholder="e.g. Lord Julian Sterling"
+                  placeholder="e.g. Vikram Sharma"
                   value={newReviewAuthor}
                   onChange={(e) => setNewReviewAuthor(e.target.value)}
                   className="w-full bg-[#F4F4F0] border border-[#1A1A18]/20 px-3 py-2 text-xs text-[#1A1A18] focus:outline-hidden"
@@ -724,7 +726,7 @@ export const ProductDetailView: React.FC<ProductDetailViewProps> = ({
                 <input
                   type="text"
                   required
-                  placeholder="e.g. Architectural masterpiece"
+                  placeholder="e.g. Exceptional craftsmanship"
                   value={newReviewTitle}
                   onChange={(e) => setNewReviewTitle(e.target.value)}
                   className="w-full bg-[#F4F4F0] border border-[#1A1A18]/20 px-3 py-2 text-xs text-[#1A1A18] focus:outline-hidden"
@@ -736,7 +738,7 @@ export const ProductDetailView: React.FC<ProductDetailViewProps> = ({
                 <textarea
                   rows={4}
                   required
-                  placeholder="Describe your tactile experience, finish, and material weight..."
+                  placeholder="Describe your tactile experience, finish, and quality..."
                   value={newReviewComment}
                   onChange={(e) => setNewReviewComment(e.target.value)}
                   className="w-full bg-[#F4F4F0] border border-[#1A1A18]/20 px-3 py-2 text-xs text-[#1A1A18] focus:outline-hidden"
@@ -748,7 +750,7 @@ export const ProductDetailView: React.FC<ProductDetailViewProps> = ({
                 disabled={isSubmittingReview}
                 className="w-full py-3 bg-[#1A1A18] hover:bg-[#333330] text-[#FBFBF9] uppercase tracking-wider font-semibold text-xs transition-colors cursor-pointer"
               >
-                {isSubmittingReview ? 'Submitting...' : 'Post Verified Appraisal'}
+                {isSubmittingReview ? 'Submitting...' : 'Post Appraisal'}
               </button>
             </form>
           </div>
@@ -785,7 +787,7 @@ export const ProductDetailView: React.FC<ProductDetailViewProps> = ({
             <button
               onClick={handleAddToCart}
               disabled={isOutOfStock}
-              className="py-2.5 px-5 bg-[#1A1A18] hover:bg-[#333330] text-[#FBFBF9] text-xs uppercase tracking-wider font-semibold transition-colors cursor-pointer shrink-0"
+              className="py-2.5 px-5 bg-[#1A1A18] hover:bg-[#333330] disabled:bg-[#8A8A82] text-[#FBFBF9] text-xs uppercase tracking-wider font-semibold transition-colors cursor-pointer shrink-0"
             >
               {isOutOfStock ? 'Sold Out' : 'Add to Bag'}
             </button>

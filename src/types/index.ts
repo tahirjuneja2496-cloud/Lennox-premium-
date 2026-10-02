@@ -72,26 +72,27 @@ export interface CartItem {
 
 export interface CustomerDetails {
   fullName: string;
-  email: string;
-  phone: string;
+  mobileNumber: string;
   address: string;
-  apartment?: string;
   city: string;
   state: string;
   pincode: string;
-  country: string;
+  email?: string;
+  phone?: string;
+  apartment?: string;
+  country?: string;
 }
 
 export type OrderStatus =
   | 'Pending'
   | 'Confirmed'
+  | 'Packed'
   | 'Processing'
   | 'Shipped'
-  | 'Out for delivery'
   | 'Delivered'
   | 'Cancelled'
-  | 'Returned'
-  | 'Refunded';
+  | 'Refunded'
+  | 'New';
 
 export interface OrderItem {
   productId: string;

@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
 import { Product, Category, Order, CustomerProfile, Coupon, Review, StoreSettings, OrderStatus } from '../types';
-import { api } from '../services/api';
+import { api, getAdminToken, setAdminToken } from '../services/api';
 import { useStore } from './StoreContext';
 
 interface AdminUser {
@@ -65,9 +65,13 @@ const AdminContext = createContext<AdminContextType | undefined>(undefined);
 export const AdminProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
   const { refreshData: refreshStoreData, addToast } = useStore();
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(() => {
-    return localStorage.getItem('atelierv_admin_auth') === 'true';
+    const token = getAdminToken();
+    const hasAuth = localStorage.getItem('atelierv_admin_auth') === 'true';
+    return Boolean(hasAuth && token);
   });
   const [adminUser, setAdminUser] = useState<AdminUser | null>(() => {
+    const token = getAdminToken();
+    if (!token) return null;
     const saved = localStorage.getItem('atelierv_admin_user');
     return saved ? JSON.parse(saved) : null;
   });
@@ -79,6 +83,15 @@ export const AdminProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   const [loading, setLoading] = useState(false);
 
   const refreshAdminData = async () => {
+    const token = getAdminToken();
+    if (!token) {
+      setIsAuthenticated(false);
+      setAdminUser(null);
+      localStorage.removeItem('atelierv_admin_auth');
+      localStorage.removeItem('atelierv_admin_user');
+      return;
+    }
+
     setLoading(true);
     try {
       const [oData, cData, coupData, rData] = await Promise.all([
@@ -91,8 +104,16 @@ export const AdminProvider: React.FC<{ children: ReactNode }> = ({ children }) =
       setCustomers(cData);
       setCoupons(coupData);
       setReviews(rData);
-    } catch (err) {
-      console.error('Error fetching admin data:', err);
+    } catch (err: any) {
+      if (err?.message?.includes('Unauthorized') || err?.message?.includes('401')) {
+        setIsAuthenticated(false);
+        setAdminUser(null);
+        setAdminToken(null);
+        localStorage.removeItem('atelierv_admin_auth');
+        localStorage.removeItem('atelierv_admin_user');
+      } else {
+        console.warn('Admin sync notice:', err?.message || err);
+      }
     } finally {
       setLoading(false);
     }
@@ -101,6 +122,11 @@ export const AdminProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   useEffect(() => {
     if (isAuthenticated) {
       refreshAdminData();
+      // Periodically refresh orders and ledger so incoming storefront orders appear immediately
+      const interval = setInterval(() => {
+        refreshAdminData();
+      }, 8000);
+      return () => clearInterval(interval);
     }
   }, [isAuthenticated]);
 
@@ -126,8 +152,10 @@ export const AdminProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   const logout = () => {
     setIsAuthenticated(false);
     setAdminUser(null);
+    setAdminToken(null);
     localStorage.removeItem('atelierv_admin_auth');
     localStorage.removeItem('atelierv_admin_user');
+    api.adminLogout();
     addToast('Logged out of Admin Portal', 'info');
   };
 

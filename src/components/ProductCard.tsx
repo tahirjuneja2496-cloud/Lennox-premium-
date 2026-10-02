@@ -14,8 +14,17 @@ export const ProductCard: React.FC<ProductCardProps> = ({ product, onSelect }) =
   const [imageError, setImageError] = useState(false);
 
   const isFavorited = isWishlisted(product.id);
-  const primaryImage = product.images?.[0] || '';
-  const secondaryImage = product.images?.[1] || primaryImage;
+
+  const cleanUrl = (url?: string) => {
+    if (!url) return '';
+    if (url.startsWith('/src/assets/images/')) {
+      return url.replace('/src/assets/images/', '/images/');
+    }
+    return url;
+  };
+
+  const primaryImage = cleanUrl(product.images?.[0]);
+  const secondaryImage = cleanUrl(product.images?.[1]) || primaryImage;
 
   const isOutOfStock = product.stock <= 0;
   const isLowStock = product.stock > 0 && product.stock <= (product.lowStockThreshold || 3);
@@ -49,7 +58,7 @@ export const ProductCard: React.FC<ProductCardProps> = ({ product, onSelect }) =
           )}
         </button>
 
-        {/* Wishlist Button (Always visible on touch, hover on desktop) */}
+        {/* Wishlist Button */}
         <button
           onClick={(e) => {
             e.stopPropagation();
@@ -65,7 +74,7 @@ export const ProductCard: React.FC<ProductCardProps> = ({ product, onSelect }) =
           />
         </button>
 
-        {/* Quick Action Overlay (slides up smoothly on hover) */}
+        {/* Quick Action Overlay */}
         <div className="absolute inset-x-3 bottom-3 z-10 flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity duration-200">
           <button
             onClick={(e) => {
@@ -93,7 +102,7 @@ export const ProductCard: React.FC<ProductCardProps> = ({ product, onSelect }) =
         </div>
       </div>
 
-      {/* Product Metadata (Clean unboxed text, no pill badges) */}
+      {/* Product Metadata */}
       <div className="pt-3.5 flex flex-col flex-grow">
         {/* Category & Status Indicator */}
         <div className="flex items-center justify-between text-[11px] text-[#71716A] uppercase tracking-wider">
