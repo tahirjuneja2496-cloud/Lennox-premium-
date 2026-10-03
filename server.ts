@@ -20,7 +20,10 @@ import {
   saveOrderToSupabase,
   getOrdersFromSupabase,
   updateOrderInSupabase,
-  uploadImageToSupabase
+  uploadImageToSupabase,
+  getProductsFromSupabase,
+  saveProductToSupabase,
+  deleteProductFromSupabase
 } from './src/db/supabase.ts';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -309,14 +312,30 @@ app.post('/api/admin/logout', (req: Request, res: Response) => {
 });
 
 // -------------------------------------------------------------
-// API: Products (CRUD)
+// API: Products (CRUD synced with Supabase Database)
 // -------------------------------------------------------------
 app.get('/api/products', async (req: Request, res: Response) => {
   try {
+    // 1. First attempt to read live from Supabase
+    const spResult = await getProductsFromSupabase();
+    if (spResult.products && spResult.products.length > 0) {
+      const db = await readDatabase();
+      db.products = spResult.products;
+      return res.json(spResult.products);
+    }
+
     const db = await readDatabase();
+    // 2. If Supabase is connected but empty, seed existing products into Supabase
+    if (spResult.connected && !spResult.tableMissing && spResult.products && spResult.products.length === 0 && db.products.length > 0) {
+      for (const p of db.products) {
+        saveProductToSupabase(p).catch(() => {});
+      }
+    }
+
     res.json(db.products);
   } catch (err: any) {
-    res.status(500).json({ error: 'Failed to retrieve products' });
+    const db = await readDatabase();
+    res.json(db.products);
   }
 });
 
@@ -355,6 +374,10 @@ app.post('/api/products', async (req: Request, res: Response) => {
 
     db.products.unshift(newProduct);
     await writeDatabase(db);
+
+    // Persist immediately into Supabase database for all devices
+    await saveProductToSupabase(newProduct);
+
     res.status(201).json(newProduct);
   } catch (err: any) {
     res.status(500).json({ error: err.message || 'Failed to create product' });
@@ -380,6 +403,10 @@ app.put('/api/products/:id', async (req: Request, res: Response) => {
     updatedData.updatedAt = new Date().toISOString();
     db.products[index] = { ...db.products[index], ...updatedData };
     await writeDatabase(db);
+
+    // Persist update directly into Supabase database
+    await saveProductToSupabase(db.products[index]);
+
     res.json(db.products[index]);
   } catch (err: any) {
     res.status(500).json({ error: err.message || 'Failed to update product' });
@@ -398,6 +425,10 @@ app.delete('/api/products/:id', async (req: Request, res: Response) => {
 
     db.products.splice(index, 1);
     await writeDatabase(db);
+
+    // Delete directly from Supabase database
+    await deleteProductFromSupabase(id);
+
     res.json({ success: true, message: 'Product deleted' });
   } catch (err: any) {
     res.status(500).json({ error: 'Failed to delete product' });
@@ -432,6 +463,10 @@ app.post('/api/products/:id/duplicate', async (req: Request, res: Response) => {
 
     db.products.unshift(duplicate);
     await writeDatabase(db);
+
+    // Persist duplicate to Supabase
+    await saveProductToSupabase(duplicate);
+
     res.status(201).json(duplicate);
   } catch (err: any) {
     res.status(500).json({ error: 'Failed to duplicate product' });

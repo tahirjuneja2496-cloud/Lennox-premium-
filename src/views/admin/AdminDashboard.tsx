@@ -13,6 +13,8 @@ import {
 import { useAdmin } from '../../context/AdminContext';
 import { useStore } from '../../context/StoreContext';
 import { OrderStatus } from '../../types';
+import { getSupabaseStatus } from '../../services/api';
+import { Database, ExternalLink, Copy, Check } from 'lucide-react';
 
 interface AdminDashboardProps {
   onNavigateTab: (tab: string) => void;
@@ -20,7 +22,9 @@ interface AdminDashboardProps {
 
 export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigateTab }) => {
   const { orders, customers, metrics, updateOrderStatus } = useAdmin();
-  const { products, formatPrice } = useStore();
+  const { products, formatPrice, addToast } = useStore();
+  const [copiedSql, setCopiedSql] = React.useState(false);
+  const spStatus = getSupabaseStatus();
 
   const lowStockProducts = products.filter(
     (p) => p.stock <= (p.lowStockThreshold || 3) && p.stock > 0
@@ -59,7 +63,55 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigateTab })
         </div>
       </div>
 
-      {/* Metrics Row (4 cards) */}
+      {/* Supabase PostgreSQL & Storage Status Banner */}
+      {spStatus.tableMissing ? (
+        <div className="p-4 sm:p-5 bg-amber-50 border border-amber-300 text-amber-950 space-y-3">
+          <div className="flex items-start gap-3">
+            <Database className="w-5 h-5 text-amber-700 shrink-0 mt-0.5" />
+            <div className="space-y-1">
+              <h4 className="font-serif font-medium text-sm text-amber-950">
+                Supabase 'products' Table Pending in Project zgmvnskuusopqdrmqvox
+              </h4>
+              <p className="text-xs text-amber-900 leading-relaxed">
+                Orders and product images are connected to Supabase. To enable live product synchronization across Vercel and all devices, execute the schema script in your Supabase SQL Editor.
+              </p>
+            </div>
+          </div>
+          <div className="flex flex-wrap items-center gap-3 pt-2 border-t border-amber-200/80 text-xs">
+            <a
+              href="https://supabase.com/dashboard/project/zgmvnskuusopqdrmqvox/sql/new"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-1.5 py-1.5 px-3 bg-amber-900 text-white font-medium hover:bg-amber-800 transition-colors"
+            >
+              <span>Open Supabase SQL Editor</span>
+              <ExternalLink className="w-3.5 h-3.5" />
+            </a>
+            <button
+              onClick={() => {
+                const sql = `-- ATELIER V: CREATE PRODUCTS TABLE\ncreate table if not exists public.products (\n  id text primary key,\n  sku text not null,\n  slug text not null,\n  name text not null,\n  short_description text default '',\n  description text default '',\n  category text not null default 'Objects',\n  subcategory text,\n  brand text default 'Atelier V',\n  tags text[] default '{}'::text[],\n  price numeric(10,2) not null default 0.00,\n  original_price numeric(10,2) not null default 0.00,\n  discount_percent numeric(5,2) not null default 0.00,\n  stock integer not null default 0,\n  low_stock_threshold integer not null default 3,\n  images text[] default '{}'::text[],\n  featured boolean not null default false,\n  bestseller boolean not null default false,\n  new_arrival boolean not null default false,\n  published boolean not null default true,\n  specifications jsonb not null default '[]'::jsonb,\n  variants jsonb not null default '[]'::jsonb,\n  rating numeric(3,2) not null default 5.00,\n  review_count integer not null default 0,\n  seo jsonb not null default '{"metaTitle": "", "metaDescription": "", "keywords": ""}'::jsonb,\n  data jsonb not null default '{}'::jsonb,\n  created_at timestamptz not null default now(),\n  updated_at timestamptz not null default now()\n);\nalter table public.products enable row level security;\ncreate policy "Allow public read products" on public.products for select using (true);\ncreate policy "Allow public insert products" on public.products for insert with check (true);\ncreate policy "Allow public update products" on public.products for update using (true) with check (true);\ncreate policy "Allow public delete products" on public.products for delete using (true);`;
+                navigator.clipboard.writeText(sql);
+                setCopiedSql(true);
+                addToast('SQL script copied to clipboard! Paste into Supabase SQL editor.');
+                setTimeout(() => setCopiedSql(false), 3000);
+              }}
+              className="inline-flex items-center gap-1.5 py-1.5 px-3 bg-white border border-amber-300 text-amber-900 font-medium hover:bg-amber-100 transition-colors cursor-pointer"
+            >
+              {copiedSql ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5" />}
+              <span>{copiedSql ? 'Copied to Clipboard' : 'Copy Products SQL Script'}</span>
+            </button>
+          </div>
+        </div>
+      ) : (
+        <div className="py-2.5 px-4 bg-emerald-50 border border-emerald-200/80 text-emerald-950 flex flex-wrap items-center justify-between gap-3 text-xs">
+          <div className="flex items-center gap-2">
+            <span className="w-2 h-2 rounded-full bg-emerald-600 animate-pulse"></span>
+            <span className="font-medium">Supabase Cloud PostgreSQL & Storage Live:</span>
+            <span className="text-emerald-800">Products, orders, and images synchronized globally.</span>
+          </div>
+          <span className="text-[11px] text-emerald-700 font-mono">zgmvnskuusopqdrmqvox.supabase.co</span>
+        </div>
+      )}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
         
         {/* Total Revenue */}

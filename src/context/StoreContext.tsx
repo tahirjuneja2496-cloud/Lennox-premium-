@@ -113,6 +113,10 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
 
   useEffect(() => {
     refreshData();
+    const interval = setInterval(() => {
+      refreshData();
+    }, 12000);
+    return () => clearInterval(interval);
   }, []);
 
   const addToast = (message: string, type: 'success' | 'info' | 'error' = 'success') => {
