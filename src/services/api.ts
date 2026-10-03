@@ -168,14 +168,22 @@ export const api = {
 
   // Orders
   async getOrders(): Promise<Order[]> {
-    const res = await fetch('/api/orders', {
-      headers: getAuthHeaders()
-    });
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
-      throw new Error(err.error || 'Failed to fetch orders');
+    try {
+      const res = await fetch('/api/orders', {
+        headers: getAuthHeaders()
+      });
+      if (!res.ok) {
+        if (res.status === 401) {
+          throw new Error('Unauthorized');
+        }
+        return [];
+      }
+      return await res.json();
+    } catch (err: any) {
+      if (err?.message === 'Unauthorized') throw err;
+      console.warn('Orders fetch notice:', err?.message || err);
+      return [];
     }
-    return await res.json();
   },
 
   async createOrder(order: any): Promise<Order> {
@@ -332,20 +340,27 @@ export const api = {
 
   // Admin Auth
   async adminLogin(email: string, password: string): Promise<{ success: boolean; token: string; admin: any }> {
-    const res = await fetch('/api/admin/login', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email, password })
-    });
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
-      throw new Error(err.error || 'Authentication failed');
+    try {
+      const res = await fetch('/api/admin/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, password })
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error || 'Authentication failed: Invalid credentials');
+      }
+      const data = await res.json();
+      if (data.token) {
+        setAdminToken(data.token);
+      }
+      return data;
+    } catch (err: any) {
+      if (err.name === 'TypeError' || err.message?.toLowerCase().includes('fetch')) {
+        throw new Error('Connection to server interrupted. Please verify server is running and try again.');
+      }
+      throw err;
     }
-    const data = await res.json();
-    if (data.token) {
-      setAdminToken(data.token);
-    }
-    return data;
   },
 
   async adminLogout(): Promise<void> {
