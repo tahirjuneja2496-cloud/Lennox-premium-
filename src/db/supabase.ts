@@ -3,7 +3,7 @@ import type { Order } from '../types/index.ts';
 
 const rawUrl =
   process.env.SUPABASE_URL ||
-  'https://mnlmparjckweabyvepfd.supabase.co';
+  'https://zgmvnskuusopqdrmqvox.supabase.co';
 
 // Sanitize URL by removing /rest/v1 or trailing slashes
 const supabaseUrl = rawUrl.replace(/\/rest\/v1\/?$/, '').replace(/\/$/, '');
@@ -12,7 +12,7 @@ const supabaseKey =
   process.env.SUPABASE_SERVICE_ROLE_KEY ||
   process.env.SUPABASE_KEY ||
   process.env.SUPABASE_ANON_KEY ||
-  'sb_publishable_PPRKxUcU0-SIGo15oIsUlQ_Cfly-iT-';
+  'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InpnbXZuc2t1dXNvcHFkcm1xdm94Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTA5MzYzODYsImV4cCI6MjEwNjUxMjM4Nn0.KSqVO14ofIc86Tp2EApXA0IN27Ef2vVv9kNPI14Q3x4';
 
 export const SUPABASE_BUCKET_NAME = process.env.SUPABASE_STORAGE_BUCKET || 'product-images';
 

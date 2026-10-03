@@ -104,7 +104,7 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({
           <div className="space-y-1 px-3">
             <div className="px-3 pb-3 mb-2 border-b border-[#1A1A18]/5">
               <p className="text-[11px] font-semibold text-[#1A1A18]">{adminUser?.name || 'Executive Concierge'}</p>
-              <p className="text-[10px] text-[#71716A]">{adminUser?.email || 'admin@atelierv.com'}</p>
+              <p className="text-[10px] text-[#71716A]">{adminUser?.email || 'tahirjuneja2496@gmail.com'}</p>
             </div>
 
             {menuItems.map((item) => {
