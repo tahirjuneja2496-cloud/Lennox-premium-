@@ -17,7 +17,8 @@ import {
   getOrdersFromSupabase,
   saveOrderToSupabase,
   updateOrderInSupabase,
-  isSupabaseConnected
+  isSupabaseConnected,
+  isTableMissingError
 } from '../db/supabase';
 
 let cachedAdminToken: string | null = null;
@@ -133,53 +134,56 @@ export const api = {
   },
 
   async createProduct(product: Partial<Product>): Promise<Product> {
+    const newId = (product.id && typeof product.id === 'string' && product.id.trim())
+      ? product.id.trim()
+      : `prod-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`;
+
     const fullProduct: Product = {
-      id: product.id || `prod-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
-      sku: product.sku || `SKU-${Date.now()}`,
-      slug: product.slug || (product.name || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)+/g, ''),
-      name: product.name || 'New Creation',
+      id: newId,
+      sku: (product.sku && product.sku.trim()) || `SKU-${Date.now()}`,
+      slug: (product.slug && product.slug.trim()) || ((product.name || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)+/g, '') || `product-${Date.now()}`),
+      name: (product.name && product.name.trim()) || 'New Creation',
       shortDescription: product.shortDescription || '',
       description: product.description || '',
-      category: product.category || 'Objects',
-      subcategory: product.subcategory,
-      brand: product.brand || 'Atelier V',
-      tags: product.tags || [],
+      category: product.category || 'Lighting & Objects',
+      subcategory: product.subcategory || undefined,
+      brand: product.brand || 'Atelier V Editions',
+      tags: Array.isArray(product.tags) ? product.tags : [],
       price: Number(product.price || 0),
       originalPrice: Number(product.originalPrice || product.price || 0),
       discountPercent: Number(product.discountPercent || 0),
       stock: Number(product.stock ?? 1),
       lowStockThreshold: Number(product.lowStockThreshold || 3),
-      images: Array.isArray(product.images) && product.images.length > 0 ? product.images : [],
+      images: Array.isArray(product.images) && product.images.length > 0 ? product.images : ['/images/product_sculptural_lamp_1790850449675.jpg'],
       featured: Boolean(product.featured),
       bestseller: Boolean(product.bestseller),
       newArrival: Boolean(product.newArrival),
       published: product.published !== false,
-      specifications: product.specifications || [],
-      variants: product.variants || [],
-      rating: product.rating || 5,
-      reviewCount: product.reviewCount || 0,
+      specifications: Array.isArray(product.specifications) ? product.specifications : [],
+      variants: Array.isArray(product.variants) ? product.variants : [],
+      rating: Number(product.rating || 5),
+      reviewCount: Number(product.reviewCount || 0),
       seo: product.seo || { metaTitle: '', metaDescription: '', keywords: '' },
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-      ...product
+      createdAt: product.createdAt || new Date().toISOString(),
+      updatedAt: new Date().toISOString()
     };
 
     // Save directly to Supabase
     const spResult = await saveProductToSupabase(fullProduct);
-    if (!spResult.success && spResult.error) {
-      if (spResult.error.includes('PGRST205') || spResult.error.includes('products')) {
-        throw new Error("Supabase 'products' table missing in database. Please run the schema SQL in your Supabase SQL editor to enable persistent cross-device storage.");
+    if (!spResult.success) {
+      if (isTableMissingError(spResult.error)) {
+        throw new Error("Supabase 'products' table missing in database (relation does not exist in schema).");
       }
-      throw new Error(`Supabase save error: ${spResult.error}`);
+      throw new Error(spResult.error || 'Failed to save product to Supabase');
     }
 
     // Also persist through backend API if reachable
     try {
-      await fetch('/api/products', {
+      fetch('/api/products', {
         method: 'POST',
         headers: getAuthHeaders(),
         body: JSON.stringify(fullProduct)
-      });
+      }).catch(() => {});
     } catch {
       // Backend is optional
     }
@@ -188,47 +192,56 @@ export const api = {
   },
 
   async updateProduct(id: string, product: Partial<Product>): Promise<Product> {
-    const updated: any = {
+    const updated: Product = {
       ...product,
       id,
+      name: product.name || 'Untitled Creation',
+      sku: product.sku || `SKU-${id}`,
+      slug: product.slug || id,
+      category: product.category || 'Lighting & Objects',
+      price: Number(product.price ?? 0),
+      originalPrice: Number(product.originalPrice ?? product.price ?? 0),
+      stock: Number(product.stock ?? 0),
+      images: Array.isArray(product.images) && product.images.length > 0 ? product.images : ['/images/product_sculptural_lamp_1790850449675.jpg'],
+      published: product.published !== false,
       updatedAt: new Date().toISOString()
-    };
+    } as Product;
 
     // Update in Supabase
-    const spResult = await saveProductToSupabase(updated as Product);
-    if (!spResult.success && spResult.error) {
-      if (spResult.error.includes('PGRST205') || spResult.error.includes('products')) {
-        throw new Error("Supabase 'products' table missing in database. Please run the schema SQL in your Supabase SQL editor.");
+    const spResult = await saveProductToSupabase(updated);
+    if (!spResult.success) {
+      if (isTableMissingError(spResult.error)) {
+        throw new Error("Supabase 'products' table missing in database (relation does not exist in schema).");
       }
-      throw new Error(`Supabase update error: ${spResult.error}`);
+      throw new Error(spResult.error || 'Failed to update product in Supabase');
     }
 
     try {
-      await fetch(`/api/products/${id}`, {
+      fetch(`/api/products/${id}`, {
         method: 'PUT',
         headers: getAuthHeaders(),
         body: JSON.stringify(product)
-      });
+      }).catch(() => {});
     } catch {
       // Backend is optional
     }
-    return updated as Product;
+    return updated;
   },
 
   async deleteProduct(id: string): Promise<boolean> {
     const spResult = await deleteProductFromSupabase(id);
-    if (!spResult.success && spResult.error) {
-      if (spResult.error.includes('PGRST205') || spResult.error.includes('products')) {
-        throw new Error("Supabase 'products' table missing in database.");
+    if (!spResult.success) {
+      if (isTableMissingError(spResult.error)) {
+        throw new Error("Supabase 'products' table missing in database (relation does not exist).");
       }
-      throw new Error(`Supabase delete error: ${spResult.error}`);
+      throw new Error(spResult.error || 'Failed to delete product from Supabase');
     }
 
     try {
-      await fetch(`/api/products/${id}`, {
+      fetch(`/api/products/${id}`, {
         method: 'DELETE',
         headers: getAuthHeaders()
-      });
+      }).catch(() => {});
     } catch {
       // Ignored
     }
@@ -551,43 +564,35 @@ export const api = {
 
   // File Upload (Direct to Supabase Storage 'product-images' bucket)
   async uploadImage(file: File): Promise<{ url: string; success: boolean }> {
-    // 1. Direct Supabase Storage Upload from browser/phone
-    try {
-      const spUrl = await uploadImageToSupabase(file.name, file);
-      if (spUrl) {
-        return { url: spUrl, success: true };
-      }
-    } catch (e) {
-      console.warn('Direct upload notice:', e);
+    // Direct Supabase Storage Upload from browser/phone
+    const spResult = await uploadImageToSupabase(file.name, file);
+    if (spResult.url) {
+      return { url: spResult.url, success: true };
     }
 
-    // 2. Server upload fallback
-    return new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = async () => {
-        try {
-          const dataUrl = reader.result as string;
-          const res = await fetch('/api/upload', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              filename: file.name,
-              dataUrl
-            })
-          });
-          if (!res.ok) {
-            const err = await res.json().catch(() => ({}));
-            throw new Error(err.error || 'Upload failed');
-          }
-          const data = await res.json();
-          resolve(data);
-        } catch (error) {
-          reject(error);
-        }
-      };
-      reader.onerror = () => reject(new Error('Failed to read file from device'));
-      reader.readAsDataURL(file);
-    });
+    // If direct upload failed with error, try serverless fallback then throw real error
+    try {
+      const dataUrl = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result as string);
+        reader.onerror = () => reject(new Error('Failed to read file from device'));
+        reader.readAsDataURL(file);
+      });
+
+      const res = await fetch('/api/upload', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ filename: file.name, dataUrl })
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.url) return { url: data.url, success: true };
+      }
+    } catch {
+      // Fallback failed
+    }
+
+    throw new Error(spResult.error || 'Failed to upload image to Supabase Storage (bucket: product-images)');
   },
 
   // Admin Auth (Universal for Vercel, any phone, tablet, browser, or preview)

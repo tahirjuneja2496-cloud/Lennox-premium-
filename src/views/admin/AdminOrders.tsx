@@ -17,10 +17,15 @@ import {
 import { useAdmin } from '../../context/AdminContext';
 import { useStore } from '../../context/StoreContext';
 import { Order, OrderStatus } from '../../types';
+import {
+  generateWhatsAppMessage,
+  getWhatsAppClickToChatUrl,
+  WhatsAppIcon
+} from '../../utils/whatsapp';
 
 export const AdminOrders: React.FC = () => {
   const { orders, updateOrderStatus, refreshAdminData } = useAdmin();
-  const { formatPrice } = useStore();
+  const { formatPrice, settings } = useStore();
 
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('all');
@@ -211,7 +216,30 @@ export const AdminOrders: React.FC = () => {
                     </td>
                     <td className="py-3.5 px-3">
                       <p className="font-semibold text-[#1A1A18]">{o.customer.fullName}</p>
-                      <p className="text-[11px] font-mono text-[#71716A]">{o.customer.mobileNumber}</p>
+                      <div className="flex flex-wrap items-center gap-2 mt-1">
+                        <span className="text-[11px] font-mono text-[#71716A]">{o.customer.mobileNumber}</span>
+                        {o.customer.mobileNumber && (
+                          <a
+                            href={getWhatsAppClickToChatUrl({
+                              phone: o.customer.mobileNumber,
+                              text: generateWhatsAppMessage({
+                                order: o,
+                                status: o.status,
+                                storeName: settings.storeName,
+                                formattedTotal: formatPrice(o.pricing.grandTotal)
+                              })
+                            })}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            onClick={(e) => e.stopPropagation()}
+                            title={`Open WhatsApp chat with ${o.customer.fullName}`}
+                            className="inline-flex items-center gap-1 px-2 py-0.5 bg-[#25D366]/10 hover:bg-[#25D366] text-[#128C7E] hover:text-white border border-[#25D366]/30 hover:border-[#25D366] text-[10px] font-semibold tracking-wider uppercase transition-all duration-150 cursor-pointer shrink-0"
+                          >
+                            <WhatsAppIcon className="w-3 h-3 fill-current" />
+                            <span>WhatsApp</span>
+                          </a>
+                        )}
+                      </div>
                     </td>
                     <td className="py-3.5 px-3 text-[#52524D] max-w-[200px]">
                       <p className="truncate font-medium">{o.customer.city}, {o.customer.state}</p>
@@ -376,9 +404,31 @@ export const AdminOrders: React.FC = () => {
                   <span>Customer Details</span>
                 </p>
                 <p className="text-sm font-semibold text-[#1A1A18]">{selectedOrder.customer.fullName}</p>
-                <p className="font-mono text-xs text-[#1A1A18]">
-                  Mobile: <span className="font-semibold">{selectedOrder.customer.mobileNumber}</span>
-                </p>
+                <div className="flex flex-wrap items-center gap-2 py-0.5">
+                  <p className="font-mono text-xs text-[#1A1A18]">
+                    Mobile: <span className="font-semibold">{selectedOrder.customer.mobileNumber}</span>
+                  </p>
+                  {selectedOrder.customer.mobileNumber && (
+                    <a
+                      href={getWhatsAppClickToChatUrl({
+                        phone: selectedOrder.customer.mobileNumber,
+                        text: generateWhatsAppMessage({
+                          order: selectedOrder,
+                          status: editingStatus,
+                          storeName: settings.storeName,
+                          formattedTotal: formatPrice(selectedOrder.pricing.grandTotal)
+                        })
+                      })}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      title={`Open WhatsApp chat with ${selectedOrder.customer.fullName} with ${editingStatus} status message`}
+                      className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-[#25D366] hover:bg-[#20ba59] text-white text-[11px] font-semibold tracking-wider uppercase transition-colors shadow-xs cursor-pointer"
+                    >
+                      <WhatsAppIcon className="w-3.5 h-3.5 fill-current" />
+                      <span>WhatsApp</span>
+                    </a>
+                  )}
+                </div>
                 <p className="text-[#71716A]">
                   Payment Method:{' '}
                   <span className="font-semibold text-[#1A1A18] uppercase">

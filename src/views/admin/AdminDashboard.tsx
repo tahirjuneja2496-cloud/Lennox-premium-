@@ -15,6 +15,11 @@ import { useStore } from '../../context/StoreContext';
 import { OrderStatus } from '../../types';
 import { getSupabaseStatus } from '../../services/api';
 import { Database, ExternalLink, Copy, Check } from 'lucide-react';
+import {
+  generateWhatsAppMessage,
+  getWhatsAppClickToChatUrl,
+  WhatsAppIcon
+} from '../../utils/whatsapp';
 
 interface AdminDashboardProps {
   onNavigateTab: (tab: string) => void;
@@ -22,7 +27,7 @@ interface AdminDashboardProps {
 
 export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigateTab }) => {
   const { orders, customers, metrics, updateOrderStatus } = useAdmin();
-  const { products, formatPrice, addToast } = useStore();
+  const { products, formatPrice, addToast, settings } = useStore();
   const [copiedSql, setCopiedSql] = React.useState(false);
   const spStatus = getSupabaseStatus();
 
@@ -371,7 +376,30 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigateTab })
                   <td className="py-3 px-2 font-mono font-medium text-[#1A1A18]">{order.id}</td>
                   <td className="py-3 px-2">
                     <p className="font-medium text-[#1A1A18]">{order.customer.fullName}</p>
-                    <p className="text-[11px] text-[#71716A]">{order.customer.mobileNumber || order.customer.email}</p>
+                    <div className="flex flex-wrap items-center gap-1.5 mt-0.5">
+                      <p className="text-[11px] text-[#71716A]">{order.customer.mobileNumber || order.customer.email}</p>
+                      {order.customer.mobileNumber && (
+                        <a
+                          href={getWhatsAppClickToChatUrl({
+                            phone: order.customer.mobileNumber,
+                            text: generateWhatsAppMessage({
+                              order,
+                              status: order.status,
+                              storeName: settings.storeName,
+                              formattedTotal: formatPrice(order.pricing.grandTotal)
+                            })
+                          })}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          onClick={(e) => e.stopPropagation()}
+                          title={`Open WhatsApp chat with ${order.customer.fullName}`}
+                          className="inline-flex items-center gap-1 px-1.5 py-0.5 bg-[#25D366]/10 hover:bg-[#25D366] text-[#128C7E] hover:text-white border border-[#25D366]/30 hover:border-[#25D366] text-[9px] font-semibold tracking-wider uppercase transition-all duration-150 cursor-pointer shrink-0"
+                        >
+                          <WhatsAppIcon className="w-2.5 h-2.5 fill-current" />
+                          <span>WhatsApp</span>
+                        </a>
+                      )}
+                    </div>
                   </td>
                   <td className="py-3 px-2 text-[#52524D]">
                     {order.customer.city}, {order.customer.state || order.customer.country || 'India'}

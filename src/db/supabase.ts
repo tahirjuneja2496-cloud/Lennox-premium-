@@ -13,7 +13,7 @@ const NODE_URL = typeof process !== 'undefined' && process.env ? (process.env.SU
 const NODE_KEY = typeof process !== 'undefined' && process.env ? (process.env.SUPABASE_ANON_KEY || process.env.SUPABASE_KEY || process.env.VITE_SUPABASE_ANON_KEY) : undefined;
 const NODE_BUCKET = typeof process !== 'undefined' && process.env ? (process.env.SUPABASE_STORAGE_BUCKET || process.env.VITE_SUPABASE_STORAGE_BUCKET) : undefined;
 
-// Hardcoded fallback matches the user's project (public anon key is safe for client code)
+// Hardcoded fallback matches the user's project (public anon key is safe for client code with RLS)
 const DEFAULT_SUPABASE_URL = 'https://zgmvnskuusopqdrmqvox.supabase.co';
 const DEFAULT_SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InpnbXZuc2t1dXNvcHFkcm1xdm94Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTA5MzYzODYsImV4cCI6MjEwNjUxMjM4Nn0.KSqVO14ofIc86Tp2EApXA0IN27Ef2vVv9kNPI14Q3x4';
 const DEFAULT_BUCKET = 'product-images';
@@ -42,19 +42,39 @@ if (supabaseUrl && supabaseKey) {
 export const isSupabaseConnected = (): boolean => client !== null;
 export const getSupabaseClient = (): SupabaseClient | null => client;
 
+/**
+ * Accurately check whether an error indicates the relation/table does NOT exist.
+ * Never conflates not-null constraints, RLS errors, validation errors, or network errors with missing tables.
+ */
+export function isTableMissingError(error: any): boolean {
+  if (!error) return false;
+  const msg = typeof error === 'string' ? error : (error.message || '');
+  const code = error.code || '';
+  return (
+    code === 'PGRST205' ||
+    code === '42P01' ||
+    msg.includes('PGRST205') ||
+    msg.includes('42P01') ||
+    msg.includes('in the schema cache') ||
+    (msg.includes('relation') && msg.includes('does not exist'))
+  );
+}
+
 // =========================================================================
 // SUPABASE STORAGE: Product Image Uploads
 // =========================================================================
 
 /**
- * Upload product image (base64 dataUrl, binary Buffer, or browser File) directly to Supabase Storage.
+ * Upload product image (browser File, binary Buffer, or base64 dataUrl) directly to Supabase Storage.
  * Returns the public URL of the uploaded image on Supabase CDN.
  */
 export async function uploadImageToSupabase(
   filename: string,
   fileOrData: any
-): Promise<string | null> {
-  if (!client) return null;
+): Promise<{ url?: string; error?: string }> {
+  if (!client) {
+    return { error: 'Supabase client not initialized' };
+  }
   try {
     let payload: any;
     let contentType = 'image/jpeg';
@@ -98,8 +118,8 @@ export async function uploadImageToSupabase(
       });
 
     if (error) {
-      console.warn('[Atelier V] Supabase Storage upload notice:', error.message);
-      return null;
+      console.warn('[Atelier V] Supabase Storage upload error:', error.message);
+      return { error: error.message };
     }
 
     const { data: urlData } = client.storage
@@ -108,12 +128,12 @@ export async function uploadImageToSupabase(
 
     if (urlData?.publicUrl) {
       console.log('[Atelier V] Uploaded image to Supabase Storage CDN:', urlData.publicUrl);
-      return urlData.publicUrl;
+      return { url: urlData.publicUrl };
     }
-    return null;
+    return { error: 'Failed to retrieve public URL from Supabase Storage' };
   } catch (err: any) {
-    console.warn('[Atelier V] Supabase Storage upload error:', err?.message || err);
-    return null;
+    console.warn('[Atelier V] Supabase Storage upload exception:', err?.message || err);
+    return { error: err?.message || 'Storage upload failed' };
   }
 }
 
@@ -125,14 +145,15 @@ export function mapSupabaseToProduct(row: any): Product {
   if (row.data && typeof row.data === 'object' && row.data.name) {
     return {
       ...row.data,
-      id: row.id || row.data.id,
-      sku: row.sku || row.data.sku,
-      slug: row.slug || row.data.slug,
-      name: row.name || row.data.name,
+      id: String(row.id || row.data.id),
+      sku: String(row.sku || row.data.sku || `SKU-${row.id}`),
+      slug: String(row.slug || row.data.slug || `creation-${row.id}`),
+      name: String(row.name || row.data.name || 'Untitled Creation'),
       price: Number(row.price ?? row.data.price ?? 0),
       originalPrice: Number(row.original_price ?? row.data.originalPrice ?? row.price ?? 0),
+      discountPercent: Number(row.discount_percent ?? row.data.discountPercent ?? 0),
       stock: Number(row.stock ?? row.data.stock ?? 0),
-      category: row.category || row.data.category || 'Objects',
+      category: String(row.category || row.data.category || 'Objects'),
       published: row.published !== undefined ? Boolean(row.published) : Boolean(row.data.published ?? true),
       images: Array.isArray(row.images) && row.images.length > 0 ? row.images : (row.data.images || []),
       createdAt: row.created_at || row.data.createdAt || new Date().toISOString(),
@@ -141,15 +162,15 @@ export function mapSupabaseToProduct(row: any): Product {
   }
 
   return {
-    id: row.id,
-    sku: row.sku || `SKU-${row.id}`,
-    slug: row.slug || `creation-${row.id}`,
-    name: row.name || 'Untitled Creation',
-    shortDescription: row.short_description || row.shortDescription || '',
-    description: row.description || '',
-    category: row.category || 'Objects',
+    id: String(row.id),
+    sku: String(row.sku || `SKU-${row.id}`),
+    slug: String(row.slug || `creation-${row.id}`),
+    name: String(row.name || 'Untitled Creation'),
+    shortDescription: String(row.short_description || row.shortDescription || ''),
+    description: String(row.description || ''),
+    category: String(row.category || 'Objects'),
     subcategory: row.subcategory || undefined,
-    brand: row.brand || 'Atelier V',
+    brand: String(row.brand || 'Atelier V'),
     tags: Array.isArray(row.tags) ? row.tags : [],
     price: Number(row.price || 0),
     originalPrice: Number(row.original_price || row.originalPrice || row.price || 0),
@@ -172,33 +193,34 @@ export function mapSupabaseToProduct(row: any): Product {
 }
 
 export function mapProductToSupabase(p: Product): Record<string, any> {
+  const prodId = (p.id && String(p.id).trim()) ? String(p.id).trim() : `prod-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`;
   return {
-    id: p.id,
-    sku: p.sku,
-    slug: p.slug,
-    name: p.name,
+    id: prodId,
+    sku: String(p.sku || `SKU-${Date.now()}`).trim(),
+    slug: String(p.slug || (p.name || '').toLowerCase().replace(/[^a-z0-9]+/g, '-')).trim(),
+    name: String(p.name || 'New Creation').trim(),
     short_description: p.shortDescription || '',
     description: p.description || '',
-    category: p.category,
+    category: p.category || 'Lighting & Objects',
     subcategory: p.subcategory || null,
-    brand: p.brand || 'Atelier V',
-    tags: p.tags || [],
-    price: p.price,
-    original_price: p.originalPrice || p.price,
-    discount_percent: p.discountPercent || 0,
-    stock: p.stock,
-    low_stock_threshold: p.lowStockThreshold || 3,
-    images: p.images || [],
+    brand: p.brand || 'Atelier V Editions',
+    tags: Array.isArray(p.tags) ? p.tags : [],
+    price: Number(p.price || 0),
+    original_price: Number(p.originalPrice || p.price || 0),
+    discount_percent: Number(p.discountPercent || 0),
+    stock: Number(p.stock ?? 1),
+    low_stock_threshold: Number(p.lowStockThreshold || 3),
+    images: Array.isArray(p.images) && p.images.length > 0 ? p.images : [],
     featured: Boolean(p.featured),
     bestseller: Boolean(p.bestseller),
     new_arrival: Boolean(p.newArrival),
     published: p.published !== false,
-    specifications: p.specifications || [],
-    variants: p.variants || [],
-    rating: p.rating || 5,
-    review_count: p.reviewCount || 0,
+    specifications: Array.isArray(p.specifications) ? p.specifications : [],
+    variants: Array.isArray(p.variants) ? p.variants : [],
+    rating: Number(p.rating || 5),
+    review_count: Number(p.reviewCount || 0),
     seo: p.seo || {},
-    data: p,
+    data: { ...p, id: prodId },
     created_at: p.createdAt || new Date().toISOString(),
     updated_at: new Date().toISOString()
   };
@@ -225,7 +247,7 @@ export async function getProductsFromSupabase(): Promise<SupabaseProductsResult>
       .order('created_at', { ascending: false });
 
     if (error) {
-      const isMissing = error.message.includes('PGRST205') || error.message.includes('does not exist');
+      const isMissing = isTableMissingError(error);
       return {
         products: [],
         connected: true,
@@ -256,19 +278,19 @@ export async function getProductsFromSupabase(): Promise<SupabaseProductsResult>
 /**
  * Save or update a product in Supabase products table
  */
-export async function saveProductToSupabase(product: Product): Promise<{ success: boolean; error?: string }> {
+export async function saveProductToSupabase(product: Product): Promise<{ success: boolean; data?: any; error?: string }> {
   if (!client) {
     return { success: false, error: 'Supabase client not initialized' };
   }
   try {
     const row = mapProductToSupabase(product);
-    const { error } = await client.from('products').upsert(row);
+    const { data, error } = await client.from('products').upsert(row).select();
 
     if (error) {
       console.warn('[Atelier V] Supabase saveProduct notice:', error.message);
       return { success: false, error: error.message };
     }
-    return { success: true };
+    return { success: true, data };
   } catch (err: any) {
     console.warn('[Atelier V] Supabase saveProduct error:', err?.message || err);
     return { success: false, error: err?.message || 'Database error' };
