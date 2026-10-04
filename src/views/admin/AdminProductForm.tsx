@@ -14,8 +14,9 @@ import {
 } from 'lucide-react';
 import { useStore } from '../../context/StoreContext';
 import { useAdmin } from '../../context/AdminContext';
-import { Product, ProductVariant, ProductSpecification } from '../../types';
+import { Product, ProductVariant, ProductSpecification, ProductColorVariant, ProductVariantConfig } from '../../types';
 import { api } from '../../services/api';
+import { CATEGORY_OPTIONS, getSizePresetsForCategory } from '../../utils/variants';
 
 interface AdminProductFormProps {
   initialProduct?: Product | null;
@@ -57,7 +58,24 @@ export const AdminProductForm: React.FC<AdminProductFormProps> = ({
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [isDragging, setIsDragging] = useState(false);
 
-  // Variants State
+  // Variants & Catalogue Options State
+  const [enableSize, setEnableSize] = useState<boolean>(initialProduct?.variantConfig?.enableSize ?? false);
+  const [enableColor, setEnableColor] = useState<boolean>(initialProduct?.variantConfig?.enableColor ?? false);
+  const [enableVariantPrice, setEnableVariantPrice] = useState<boolean>(initialProduct?.variantConfig?.enableVariantPrice ?? false);
+
+  // Sizes State
+  const [availableSizes, setAvailableSizes] = useState<string[]>(
+    initialProduct?.variantConfig?.availableSizes || []
+  );
+  const [customSizeInput, setCustomSizeInput] = useState('');
+
+  // Colors State
+  const [colors, setColors] = useState<ProductColorVariant[]>(
+    initialProduct?.variantConfig?.colors || []
+  );
+  const [customColorInput, setCustomColorInput] = useState('');
+
+  // Legacy raw variants state for backward compatibility
   const [variants, setVariants] = useState<ProductVariant[]>(initialProduct?.variants || []);
   
   // Specifications State
@@ -190,6 +208,78 @@ export const AdminProductForm: React.FC<AdminProductFormProps> = ({
     setSpecifications((prev) => prev.filter((_, i) => i !== index));
   };
 
+  // Category change with size preset loading
+  const handleCategoryChange = (newCat: string) => {
+    setCategory(newCat);
+    if (enableSize && availableSizes.length === 0) {
+      const presets = getSizePresetsForCategory(newCat);
+      if (presets.length > 0) {
+        setAvailableSizes(presets);
+      }
+    }
+  };
+
+  // Size helper functions
+  const handleToggleSize = (size: string) => {
+    setAvailableSizes((prev) =>
+      prev.includes(size) ? prev.filter((s) => s !== size) : [...prev, size]
+    );
+  };
+
+  const handleAddCustomSize = () => {
+    const val = customSizeInput.trim().toUpperCase();
+    if (!val) return;
+    if (!availableSizes.includes(val)) {
+      setAvailableSizes((prev) => [...prev, val]);
+      setCustomSizeInput('');
+    } else {
+      addToast(`Size '${val}' already added`, 'info');
+    }
+  };
+
+  const handleRemoveSize = (size: string) => {
+    setAvailableSizes((prev) => prev.filter((s) => s !== size));
+  };
+
+  const handleSelectAllCategorySizes = () => {
+    const presets = getSizePresetsForCategory(category);
+    if (presets.length > 0) {
+      setAvailableSizes((prev) => Array.from(new Set([...prev, ...presets])));
+    }
+  };
+
+  const handleClearSizes = () => {
+    setAvailableSizes([]);
+  };
+
+  // Colour helper functions
+  const handleAddColor = (nameToAdd?: string) => {
+    const colorName = (nameToAdd || customColorInput).trim();
+    if (!colorName) return;
+    if (colors.some((c) => c.name.toLowerCase() === colorName.toLowerCase())) {
+      addToast(`Colour '${colorName}' is already added`, 'info');
+      return;
+    }
+    const newColor: ProductColorVariant = {
+      id: `col-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+      name: colorName,
+      image: images[0] || '',
+      price: price
+    };
+    setColors((prev) => [...prev, newColor]);
+    setCustomColorInput('');
+  };
+
+  const handleUpdateColor = (id: string, field: keyof ProductColorVariant, value: any) => {
+    setColors((prev) =>
+      prev.map((c) => (c.id === id ? { ...c, [field]: value } : c))
+    );
+  };
+
+  const handleRemoveColor = (id: string) => {
+    setColors((prev) => prev.filter((c) => c.id !== id));
+  };
+
   // Submit Handler
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -217,6 +307,58 @@ export const AdminProductForm: React.FC<AdminProductFormProps> = ({
       const discountPercent =
         originalPrice > price ? Math.round(((originalPrice - price) / originalPrice) * 100) : 0;
 
+      const variantConfig: ProductVariantConfig = {
+        enableSize,
+        enableColor,
+        enableVariantPrice,
+        availableSizes: enableSize ? availableSizes : [],
+        colors: enableColor ? colors : []
+      };
+
+      // Generate compatible variants array for backward compatibility
+      const generatedVariants: ProductVariant[] = [];
+      if (enableColor && colors.length > 0) {
+        colors.forEach((c) => {
+          if (enableSize && availableSizes.length > 0) {
+            availableSizes.forEach((sz) => {
+              generatedVariants.push({
+                id: `var-${c.name.toLowerCase()}-${sz.toLowerCase()}`,
+                name: `${c.name} / ${sz}`,
+                sku: `${sku || 'SKU'}-${c.name.slice(0, 3).toUpperCase()}-${sz}`,
+                price: enableVariantPrice && c.price ? c.price : price,
+                stock,
+                image: c.image || images[0],
+                attributes: { color: c.name, size: sz }
+              });
+            });
+          } else {
+            generatedVariants.push({
+              id: `var-${c.name.toLowerCase()}`,
+              name: c.name,
+              sku: `${sku || 'SKU'}-${c.name.slice(0, 3).toUpperCase()}`,
+              price: enableVariantPrice && c.price ? c.price : price,
+              stock,
+              image: c.image || images[0],
+              attributes: { color: c.name }
+            });
+          }
+        });
+      } else if (enableSize && availableSizes.length > 0) {
+        availableSizes.forEach((sz) => {
+          generatedVariants.push({
+            id: `var-${sz.toLowerCase()}`,
+            name: `Size ${sz}`,
+            sku: `${sku || 'SKU'}-${sz}`,
+            price,
+            stock,
+            image: images[0],
+            attributes: { size: sz }
+          });
+        });
+      } else if (variants.length > 0) {
+        generatedVariants.push(...variants);
+      }
+
       const productData: Partial<Product> = {
         id: initialProduct?.id,
         name: name.trim(),
@@ -238,7 +380,8 @@ export const AdminProductForm: React.FC<AdminProductFormProps> = ({
         featured,
         bestseller,
         newArrival,
-        variants,
+        variants: generatedVariants,
+        variantConfig,
         specifications: specifications.filter((s) => s.label.trim() && s.value.trim()),
         rating: initialProduct?.rating || 5.0,
         reviewCount: initialProduct?.reviewCount || 0,
@@ -351,15 +494,20 @@ export const AdminProductForm: React.FC<AdminProductFormProps> = ({
               <label className="block text-[#1A1A18] font-medium mb-1.5">Category *</label>
               <select
                 value={category}
-                onChange={(e) => setCategory(e.target.value)}
+                onChange={(e) => handleCategoryChange(e.target.value)}
                 className="w-full bg-[#F4F4F0] border border-[#1A1A18]/20 px-3.5 py-2.5 text-xs text-[#1A1A18] focus:outline-hidden cursor-pointer"
               >
-                {categories.map((c) => (
-                  <option key={c.id} value={c.name}>
-                    {c.name}
+                {Array.from(new Set([...CATEGORY_OPTIONS, ...categories.map((c) => c.name)])).map((catName) => (
+                  <option key={catName} value={catName}>
+                    {catName}
                   </option>
                 ))}
               </select>
+              {enableSize && getSizePresetsForCategory(category).length > 0 && (
+                <p className="text-[10px] text-emerald-800 font-medium mt-1">
+                  Preset available: {getSizePresetsForCategory(category).slice(0, 5).join(', ')}...
+                </p>
+              )}
             </div>
 
             <div>
@@ -628,46 +776,370 @@ export const AdminProductForm: React.FC<AdminProductFormProps> = ({
           </div>
         </div>
 
-        {/* Section 4: Variants Builder */}
+        {/* Section 4: Product Variants (Optional) */}
         <div className="p-6 sm:p-8 bg-white border border-[#1A1A18]/10 space-y-6 shadow-xs">
-          <div className="flex items-center justify-between">
-            <div>
-              <h2 className="text-sm uppercase tracking-wider font-semibold text-[#1A1A18]">
-                4. Variants & Specifications
-              </h2>
-              <p className="text-xs text-[#71716A] mt-0.5">
-                Support for color, finish, and size variants with individual SKU and stock.
-              </p>
-            </div>
-            <button
-              type="button"
-              onClick={handleAddVariant}
-              className="py-1.5 px-3 bg-[#F4F4F0] hover:bg-[#EAEAE5] text-[#1A1A18] uppercase tracking-wider text-[11px] font-semibold transition-colors cursor-pointer flex items-center gap-1.5"
-            >
-              <Plus className="w-3.5 h-3.5" />
-              <span>Add Variant</span>
-            </button>
+          <div>
+            <h2 className="text-sm uppercase tracking-wider font-semibold text-[#1A1A18]">
+              4. Product Variants (Optional)
+            </h2>
+            <p className="text-xs text-[#71716A] mt-0.5">
+              Optionally enable sizes, colourways, and variant-specific pricing. All images belong to this ONE product catalogue.
+            </p>
           </div>
 
-          {variants.length === 0 ? (
-            <p className="text-xs text-[#71716A] italic">No variants added. Product will sell as a single edition.</p>
-          ) : (
-            <div className="space-y-3">
+          {/* Optional Variant Feature Toggles */}
+          <div className="p-4 bg-[#F4F4F0] border border-[#1A1A18]/15 grid grid-cols-1 sm:grid-cols-3 gap-4">
+            <label className="flex items-start gap-3 cursor-pointer p-2 rounded-xs hover:bg-[#EAEAE5] transition-colors">
+              <input
+                type="checkbox"
+                checked={enableSize}
+                onChange={(e) => {
+                  const val = e.target.checked;
+                  setEnableSize(val);
+                  if (val && availableSizes.length === 0) {
+                    const presets = getSizePresetsForCategory(category);
+                    if (presets.length > 0) setAvailableSizes(presets);
+                  }
+                }}
+                className="w-4 h-4 mt-0.5 accent-[#1A1A18] cursor-pointer"
+              />
+              <div>
+                <span className="font-semibold text-xs text-[#1A1A18] block">Enable Size</span>
+                <span className="text-[10px] text-[#71716A] leading-tight block mt-0.5">
+                  Category presets (Shoes, Apparel, Rings) or custom sizes
+                </span>
+              </div>
+            </label>
+
+            <label className="flex items-start gap-3 cursor-pointer p-2 rounded-xs hover:bg-[#EAEAE5] transition-colors">
+              <input
+                type="checkbox"
+                checked={enableColor}
+                onChange={(e) => setEnableColor(e.target.checked)}
+                className="w-4 h-4 mt-0.5 accent-[#1A1A18] cursor-pointer"
+              />
+              <div>
+                <span className="font-semibold text-xs text-[#1A1A18] block">Enable Colour</span>
+                <span className="text-[10px] text-[#71716A] leading-tight block mt-0.5">
+                  Link catalogue pictures to specific colourways
+                </span>
+              </div>
+            </label>
+
+            <label className="flex items-start gap-3 cursor-pointer p-2 rounded-xs hover:bg-[#EAEAE5] transition-colors">
+              <input
+                type="checkbox"
+                checked={enableVariantPrice}
+                onChange={(e) => setEnableVariantPrice(e.target.checked)}
+                className="w-4 h-4 mt-0.5 accent-[#1A1A18] cursor-pointer"
+              />
+              <div>
+                <span className="font-semibold text-xs text-[#1A1A18] block">Image/Variant Price</span>
+                <span className="text-[10px] text-[#71716A] leading-tight block mt-0.5">
+                  Assign individual prices to different images/colours
+                </span>
+              </div>
+            </label>
+          </div>
+
+          {/* Sub-section: Size Configuration */}
+          {enableSize && (
+            <div className="p-5 border border-[#1A1A18]/15 bg-[#FBFBF9] space-y-4">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-2 border-b border-[#1A1A18]/10">
+                <div>
+                  <h3 className="text-xs uppercase tracking-wider font-semibold text-[#1A1A18]">
+                    Size System (Category: {category})
+                  </h3>
+                  <p className="text-[11px] text-[#71716A]">
+                    Select available sizes or add custom dimensions. Customer will see only enabled sizes.
+                  </p>
+                </div>
+                {getSizePresetsForCategory(category).length > 0 && (
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={handleSelectAllCategorySizes}
+                      className="px-2.5 py-1 bg-white border border-[#1A1A18]/20 hover:border-[#1A1A18] text-[10px] uppercase tracking-wider text-[#1A1A18] font-medium cursor-pointer"
+                    >
+                      Select All Presets
+                    </button>
+                    {availableSizes.length > 0 && (
+                      <button
+                        type="button"
+                        onClick={handleClearSizes}
+                        className="px-2.5 py-1 bg-white border border-[#1A1A18]/20 hover:text-rose-700 text-[10px] uppercase tracking-wider text-[#71716A] font-medium cursor-pointer"
+                      >
+                        Clear
+                      </button>
+                    )}
+                  </div>
+                )}
+              </div>
+
+              {/* Category Presets Quick Toggles */}
+              {getSizePresetsForCategory(category).length > 0 && (
+                <div className="space-y-1.5">
+                  <span className="text-[11px] text-[#71716A] font-medium block">
+                    Quick suggestions for {category} (click to toggle):
+                  </span>
+                  <div className="flex flex-wrap gap-1.5">
+                    {getSizePresetsForCategory(category).map((sz) => {
+                      const isSelected = availableSizes.includes(sz);
+                      return (
+                        <button
+                          key={sz}
+                          type="button"
+                          onClick={() => handleToggleSize(sz)}
+                          className={`px-3 py-1 text-xs font-mono font-medium border transition-colors cursor-pointer ${
+                            isSelected
+                              ? 'bg-[#1A1A18] text-white border-[#1A1A18]'
+                              : 'bg-white text-[#1A1A18] border-[#1A1A18]/20 hover:border-[#1A1A18]'
+                          }`}
+                        >
+                          {isSelected ? `✓ ${sz}` : sz}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
+              {/* Active Sizes Tags */}
+              <div className="space-y-1.5">
+                <span className="text-[11px] font-semibold text-[#1A1A18] block">
+                  Active Sizes on Product ({availableSizes.length}):
+                </span>
+                {availableSizes.length === 0 ? (
+                  <p className="text-xs text-amber-800 italic">
+                    No sizes selected yet. Choose from suggestions above or type a custom size below.
+                  </p>
+                ) : (
+                  <div className="flex flex-wrap gap-2">
+                    {availableSizes.map((sz) => (
+                      <span
+                        key={sz}
+                        className="inline-flex items-center gap-1.5 px-3 py-1 bg-white border border-[#1A1A18]/30 text-xs font-mono text-[#1A1A18] font-semibold shadow-xs"
+                      >
+                        <span>{sz}</span>
+                        <button
+                          type="button"
+                          onClick={() => handleRemoveSize(sz)}
+                          className="text-[#8A8A82] hover:text-rose-700 cursor-pointer p-0.5"
+                          title={`Remove size ${sz}`}
+                        >
+                          <X className="w-3 h-3" />
+                        </button>
+                      </span>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* Add Custom Size */}
+              <div className="flex items-center gap-2 pt-2 border-t border-[#1A1A18]/10 max-w-sm">
+                <input
+                  type="text"
+                  placeholder="Custom size (e.g. 46, Free Size, 16Y)"
+                  value={customSizeInput}
+                  onChange={(e) => setCustomSizeInput(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault();
+                      handleAddCustomSize();
+                    }
+                  }}
+                  className="flex-1 bg-white border border-[#1A1A18]/20 px-3 py-1.5 text-xs text-[#1A1A18] focus:outline-hidden"
+                />
+                <button
+                  type="button"
+                  onClick={handleAddCustomSize}
+                  className="px-3 py-1.5 bg-[#1A1A18] hover:bg-[#333330] text-[#FBFBF9] text-xs uppercase tracking-wider font-semibold cursor-pointer"
+                >
+                  Add Size
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* Sub-section: Colour System & Variant Pricing */}
+          {enableColor && (
+            <div className="p-5 border border-[#1A1A18]/15 bg-[#FBFBF9] space-y-4">
+              <div className="pb-2 border-b border-[#1A1A18]/10">
+                <h3 className="text-xs uppercase tracking-wider font-semibold text-[#1A1A18]">
+                  Colourways & Image Links
+                </h3>
+                <p className="text-[11px] text-[#71716A]">
+                  Link each colour to a picture from this catalogue. When customers pick a colour, the photo (and variant price, if enabled) switches automatically.
+                </p>
+              </div>
+
+              {/* Quick Preset Colours */}
+              <div className="space-y-1.5">
+                <span className="text-[11px] text-[#71716A] font-medium block">
+                  Quick add colour:
+                </span>
+                <div className="flex flex-wrap gap-1.5">
+                  {['Black', 'White', 'Red', 'Blue', 'Green', 'Grey', 'Navy', 'Beige', 'Brown'].map((cName) => (
+                    <button
+                      key={cName}
+                      type="button"
+                      onClick={() => handleAddColor(cName)}
+                      className="px-2.5 py-1 bg-white border border-[#1A1A18]/20 hover:border-[#1A1A18] text-xs text-[#1A1A18] cursor-pointer"
+                    >
+                      + {cName}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Add Custom Colour Input */}
+              <div className="flex items-center gap-2 max-w-sm">
+                <input
+                  type="text"
+                  placeholder="Custom colour (e.g. Forest Green, Space Grey)"
+                  value={customColorInput}
+                  onChange={(e) => setCustomColorInput(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault();
+                      handleAddColor();
+                    }
+                  }}
+                  className="flex-1 bg-white border border-[#1A1A18]/20 px-3 py-1.5 text-xs text-[#1A1A18] focus:outline-hidden"
+                />
+                <button
+                  type="button"
+                  onClick={() => handleAddColor()}
+                  className="px-3 py-1.5 bg-[#1A1A18] hover:bg-[#333330] text-[#FBFBF9] text-xs uppercase tracking-wider font-semibold cursor-pointer"
+                >
+                  Add Colour
+                </button>
+              </div>
+
+              {/* List of Configured Colours */}
+              <div className="space-y-3 pt-2">
+                {colors.length === 0 ? (
+                  <p className="text-xs text-amber-800 italic">
+                    No colours added yet. Add colours above to link photos and customize prices.
+                  </p>
+                ) : (
+                  colors.map((c, cIdx) => (
+                    <div
+                      key={c.id || cIdx}
+                      className="p-3 bg-white border border-[#1A1A18]/15 grid grid-cols-1 sm:grid-cols-12 gap-3 items-center"
+                    >
+                      {/* Colour Name */}
+                      <div className="sm:col-span-4">
+                        <label className="text-[10px] uppercase text-[#71716A] block mb-1">
+                          Colour Name
+                        </label>
+                        <input
+                          type="text"
+                          value={c.name}
+                          onChange={(e) => handleUpdateColor(c.id, 'name', e.target.value)}
+                          className="w-full bg-[#F4F4F0] border border-[#1A1A18]/20 px-2.5 py-1.5 text-xs text-[#1A1A18] font-medium focus:outline-hidden"
+                        />
+                      </div>
+
+                      {/* Linked Image Selection */}
+                      <div className="sm:col-span-4">
+                        <label className="text-[10px] uppercase text-[#71716A] block mb-1">
+                          Linked Catalogue Picture
+                        </label>
+                        <div className="flex items-center gap-2">
+                          {c.image ? (
+                            <img
+                              src={c.image}
+                              alt={c.name}
+                              className="w-7 h-9 object-cover border border-[#1A1A18]/20 shrink-0 bg-[#F4F4F0]"
+                            />
+                          ) : (
+                            <div className="w-7 h-9 border border-dashed border-[#1A1A18]/30 flex items-center justify-center shrink-0">
+                              <ImageIcon className="w-3.5 h-3.5 text-[#8A8A82]" />
+                            </div>
+                          )}
+                          <select
+                            value={c.image || ''}
+                            onChange={(e) => handleUpdateColor(c.id, 'image', e.target.value)}
+                            className="flex-1 bg-[#F4F4F0] border border-[#1A1A18]/20 px-2 py-1.5 text-xs text-[#1A1A18] focus:outline-hidden cursor-pointer truncate"
+                          >
+                            <option value="">(Default primary image)</option>
+                            {images.map((img, imgIdx) => (
+                              <option key={imgIdx} value={img}>
+                                Picture #{imgIdx + 1}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                      </div>
+
+                      {/* Variant Price (if enabled) */}
+                      {enableVariantPrice ? (
+                        <div className="sm:col-span-3">
+                          <label className="text-[10px] uppercase text-[#71716A] block mb-1">
+                            Variant Price (₹)
+                          </label>
+                          <input
+                            type="number"
+                            value={c.price !== undefined ? c.price : price}
+                            onChange={(e) => handleUpdateColor(c.id, 'price', Number(e.target.value))}
+                            placeholder={String(price)}
+                            className="w-full bg-[#F4F4F0] border border-[#1A1A18]/20 px-2.5 py-1.5 text-xs text-[#1A1A18] font-semibold focus:outline-hidden"
+                          />
+                        </div>
+                      ) : (
+                        <div className="sm:col-span-3 text-[11px] text-[#71716A]">
+                          <span>Standard price: <strong>₹{price}</strong></span>
+                        </div>
+                      )}
+
+                      {/* Remove Button */}
+                      <div className="sm:col-span-1 flex justify-end">
+                        <button
+                          type="button"
+                          onClick={() => handleRemoveColor(c.id)}
+                          className="p-1.5 text-rose-700 hover:text-rose-900 cursor-pointer"
+                          title="Remove colour"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* Fallback legacy variants if neither size nor color enabled, but raw variants exist */}
+          {!enableSize && !enableColor && variants.length > 0 && (
+            <div className="space-y-3 pt-2 border-t border-[#1A1A18]/10">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-semibold text-[#1A1A18]">
+                  Existing Legacy Editions ({variants.length})
+                </span>
+                <button
+                  type="button"
+                  onClick={handleAddVariant}
+                  className="py-1 px-2.5 bg-[#F4F4F0] hover:bg-[#EAEAE5] text-[#1A1A18] uppercase tracking-wider text-[10px] font-semibold transition-colors cursor-pointer flex items-center gap-1"
+                >
+                  <Plus className="w-3 h-3" />
+                  <span>Add Legacy Variant</span>
+                </button>
+              </div>
               {variants.map((v, idx) => (
-                <div key={v.id} className="p-4 bg-[#F4F4F0] border border-[#1A1A18]/10 grid grid-cols-1 sm:grid-cols-4 gap-3 items-center">
+                <div key={v.id} className="p-3 bg-[#F4F4F0] border border-[#1A1A18]/10 grid grid-cols-1 sm:grid-cols-4 gap-3 items-center">
                   <div>
                     <label className="text-[10px] uppercase text-[#71716A] block mb-1">Variant Name</label>
                     <input
                       type="text"
                       value={v.name}
                       onChange={(e) => handleUpdateVariant(idx, 'name', e.target.value)}
-                      placeholder="e.g. Patinated Bronze / Large"
                       className="w-full bg-white border border-[#1A1A18]/20 px-2 py-1.5 text-xs text-[#1A1A18] focus:outline-hidden"
                     />
                   </div>
-
                   <div>
-                    <label className="text-[10px] uppercase text-[#71716A] block mb-1">Variant SKU</label>
+                    <label className="text-[10px] uppercase text-[#71716A] block mb-1">SKU</label>
                     <input
                       type="text"
                       value={v.sku}
@@ -675,7 +1147,6 @@ export const AdminProductForm: React.FC<AdminProductFormProps> = ({
                       className="w-full bg-white border border-[#1A1A18]/20 px-2 py-1.5 text-xs text-[#1A1A18] font-mono focus:outline-hidden"
                     />
                   </div>
-
                   <div className="grid grid-cols-2 gap-2">
                     <div>
                       <label className="text-[10px] uppercase text-[#71716A] block mb-1">Price ($)</label>
@@ -696,7 +1167,6 @@ export const AdminProductForm: React.FC<AdminProductFormProps> = ({
                       />
                     </div>
                   </div>
-
                   <div className="flex justify-end">
                     <button
                       type="button"
@@ -710,6 +1180,13 @@ export const AdminProductForm: React.FC<AdminProductFormProps> = ({
                 </div>
               ))}
             </div>
+          )}
+
+          {/* When nothing is enabled */}
+          {!enableSize && !enableColor && variants.length === 0 && (
+            <p className="text-xs text-[#71716A] italic">
+              No variants enabled. This product will sell as a single unified catalogue creation at the standard price.
+            </p>
           )}
         </div>
 

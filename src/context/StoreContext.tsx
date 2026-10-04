@@ -24,9 +24,25 @@ interface StoreContextType {
   
   // Actions
   refreshData: () => Promise<void>;
-  addToCart: (product: Product, variant?: ProductVariant, quantity?: number) => void;
-  removeFromCart: (productId: string, variantId?: string) => void;
-  updateCartQuantity: (productId: string, variantId: string | undefined, quantity: number) => void;
+  addToCart: (
+    product: Product,
+    variant?: ProductVariant,
+    quantity?: number,
+    selectedOptions?: {
+      color?: string;
+      size?: string;
+      image?: string;
+      price?: number;
+    }
+  ) => void;
+  removeFromCart: (productId: string, variantId?: string, color?: string, size?: string) => void;
+  updateCartQuantity: (
+    productId: string,
+    variantId: string | undefined,
+    quantity: number,
+    color?: string,
+    size?: string
+  ) => void;
   clearCart: () => void;
   toggleWishlist: (productId: string) => void;
   isWishlisted: (productId: string) => boolean;
@@ -131,7 +147,17 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     setToasts((prev) => prev.filter((t) => t.id !== id));
   };
 
-  const addToCart = (product: Product, variant?: ProductVariant, quantity: number = 1) => {
+  const addToCart = (
+    product: Product,
+    variant?: ProductVariant,
+    quantity: number = 1,
+    selectedOptions?: {
+      color?: string;
+      size?: string;
+      image?: string;
+      price?: number;
+    }
+  ) => {
     // Check variant or product stock
     const availableStock = variant ? variant.stock : product.stock;
     if (availableStock <= 0) {
@@ -139,13 +165,24 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
       return;
     }
 
-    const price = variant?.price ?? product.price;
+    const price = selectedOptions?.price ?? (variant?.price ?? product.price);
     const variantId = variant?.id;
-    const variantName = variant?.name;
+    const color = selectedOptions?.color;
+    const size = selectedOptions?.size;
+    const image = selectedOptions?.image || variant?.image || product.images?.[0];
+
+    let variantName = variant?.name;
+    if (!variantName && (color || size)) {
+      variantName = [color, size].filter(Boolean).join(' / ');
+    }
 
     setCart((prevCart) => {
       const existingIndex = prevCart.findIndex(
-        (item) => item.productId === product.id && item.variantId === variantId
+        (item) =>
+          item.productId === product.id &&
+          item.variantId === variantId &&
+          item.color === color &&
+          item.size === size
       );
 
       if (existingIndex > -1) {
@@ -169,6 +206,9 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
             product,
             variantId,
             variantName,
+            color,
+            size,
+            image,
             selectedVariant: variant,
             quantity: itemQty,
             price
@@ -180,22 +220,46 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     setCartDrawerOpen(true);
   };
 
-  const removeFromCart = (productId: string, variantId?: string) => {
+  const removeFromCart = (
+    productId: string,
+    variantId?: string,
+    color?: string,
+    size?: string
+  ) => {
     setCart((prev) =>
-      prev.filter((item) => !(item.productId === productId && item.variantId === variantId))
+      prev.filter(
+        (item) =>
+          !(
+            item.productId === productId &&
+            item.variantId === variantId &&
+            item.color === color &&
+            item.size === size
+          )
+      )
     );
     addToast('Item removed from bag', 'info');
   };
 
-  const updateCartQuantity = (productId: string, variantId: string | undefined, quantity: number) => {
+  const updateCartQuantity = (
+    productId: string,
+    variantId: string | undefined,
+    quantity: number,
+    color?: string,
+    size?: string
+  ) => {
     if (quantity <= 0) {
-      removeFromCart(productId, variantId);
+      removeFromCart(productId, variantId, color, size);
       return;
     }
 
     setCart((prev) =>
       prev.map((item) => {
-        if (item.productId === productId && item.variantId === variantId) {
+        if (
+          item.productId === productId &&
+          item.variantId === variantId &&
+          item.color === color &&
+          item.size === size
+        ) {
           const maxStock = item.selectedVariant ? item.selectedVariant.stock : item.product.stock;
           return {
             ...item,

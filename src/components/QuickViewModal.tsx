@@ -12,16 +12,52 @@ export const QuickViewModal: React.FC<QuickViewModalProps> = ({ onOpenFullProduc
   const [selectedVariant, setSelectedVariant] = useState<ProductVariant | undefined>(
     quickViewProduct?.variants?.[0]
   );
+
+  const cfg = quickViewProduct?.variantConfig;
+  const [selectedColor, setSelectedColor] = useState<string | undefined>(
+    cfg?.enableColor && cfg.colors && cfg.colors.length > 0 ? cfg.colors[0].name : undefined
+  );
+  const [selectedSize, setSelectedSize] = useState<string | undefined>(
+    cfg?.enableSize && cfg.availableSizes && cfg.availableSizes.length > 0
+      ? cfg.availableSizes[0]
+      : undefined
+  );
+
   const [quantity, setQuantity] = useState(1);
+
+  // Sync state when quickViewProduct changes
+  React.useEffect(() => {
+    if (quickViewProduct) {
+      setSelectedVariant(quickViewProduct.variants?.[0]);
+      setQuantity(1);
+      const c = quickViewProduct.variantConfig;
+      setSelectedColor(c?.enableColor && c.colors && c.colors.length > 0 ? c.colors[0].name : undefined);
+      setSelectedSize(c?.enableSize && c.availableSizes && c.availableSizes.length > 0 ? c.availableSizes[0] : undefined);
+    }
+  }, [quickViewProduct]);
 
   if (!quickViewProduct) return null;
 
-  const currentPrice = selectedVariant?.price ?? quickViewProduct.price;
+  const selectedColorObj = cfg?.enableColor && selectedColor
+    ? cfg.colors?.find((c) => c.name.toLowerCase() === selectedColor.toLowerCase())
+    : undefined;
+
+  const currentPrice =
+    cfg?.enableVariantPrice && selectedColorObj && typeof selectedColorObj.price === 'number' && selectedColorObj.price > 0
+      ? selectedColorObj.price
+      : (selectedVariant?.price ?? quickViewProduct.price);
+
   const currentStock = selectedVariant?.stock ?? quickViewProduct.stock;
   const isOutOfStock = currentStock <= 0;
+  const displayImage = selectedColorObj?.image || selectedVariant?.image || quickViewProduct.images?.[0];
 
   const handleAddToCart = () => {
-    addToCart(quickViewProduct, selectedVariant, quantity);
+    addToCart(quickViewProduct, selectedVariant, quantity, {
+      color: cfg?.enableColor ? selectedColor : undefined,
+      size: cfg?.enableSize ? selectedSize : undefined,
+      image: displayImage,
+      price: currentPrice
+    });
     setQuickViewProduct(null);
   };
 
@@ -53,7 +89,7 @@ export const QuickViewModal: React.FC<QuickViewModalProps> = ({ onOpenFullProduc
           {/* Image */}
           <div className="aspect-[3/4] md:aspect-auto bg-[#F4F4F0] relative">
             <img
-              src={selectedVariant?.image || quickViewProduct.images?.[0]}
+              src={displayImage}
               alt={quickViewProduct.name}
               referrerPolicy="no-referrer"
               className="w-full h-full object-cover object-center"
@@ -94,8 +130,82 @@ export const QuickViewModal: React.FC<QuickViewModalProps> = ({ onOpenFullProduc
                 {quickViewProduct.shortDescription || quickViewProduct.description}
               </p>
 
-              {/* Variant Selector */}
-              {quickViewProduct.variants && quickViewProduct.variants.length > 0 && (
+              {/* Optional Colour Selector */}
+              {cfg?.enableColor && cfg.colors && cfg.colors.length > 0 && (
+                <div className="mt-5 pt-4 border-t border-[#1A1A18]/10">
+                  <div className="flex justify-between items-center text-xs mb-2">
+                    <span className="uppercase tracking-wider font-medium text-[#1A1A18]">
+                      Colour:
+                    </span>
+                    <span className="text-[#71716A] font-medium">{selectedColor}</span>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    {cfg.colors.map((c) => {
+                      const isSelected = selectedColor?.toLowerCase() === c.name.toLowerCase();
+                      return (
+                        <button
+                          key={c.id || c.name}
+                          type="button"
+                          onClick={() => setSelectedColor(c.name)}
+                          className={`px-3 py-1.5 text-xs font-medium border transition-colors cursor-pointer flex items-center gap-1.5 ${
+                            isSelected
+                              ? 'border-[#1A1A18] bg-[#1A1A18] text-[#FBFBF9]'
+                              : 'border-[#1A1A18]/20 text-[#1A1A18] hover:border-[#1A1A18]'
+                          }`}
+                        >
+                          {c.image && (
+                            <img
+                              src={c.image}
+                              alt={c.name}
+                              className="w-3.5 h-3.5 object-cover rounded-xs border border-white/20"
+                            />
+                          )}
+                          <span>{c.name}</span>
+                          {cfg.enableVariantPrice && c.price && c.price > 0 && (
+                            <span className="text-[10px] opacity-80 tabular-nums">
+                              ({formatPrice(c.price)})
+                            </span>
+                          )}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
+              {/* Optional Size Selector */}
+              {cfg?.enableSize && cfg.availableSizes && cfg.availableSizes.length > 0 && (
+                <div className="mt-4 pt-3 border-t border-[#1A1A18]/10">
+                  <div className="flex justify-between items-center text-xs mb-2">
+                    <span className="uppercase tracking-wider font-medium text-[#1A1A18]">
+                      Size:
+                    </span>
+                    <span className="text-[#71716A] font-mono font-medium">{selectedSize}</span>
+                  </div>
+                  <div className="flex flex-wrap gap-1.5">
+                    {cfg.availableSizes.map((sz) => {
+                      const isSelected = selectedSize === sz;
+                      return (
+                        <button
+                          key={sz}
+                          type="button"
+                          onClick={() => setSelectedSize(sz)}
+                          className={`min-w-[36px] px-2.5 py-1 text-xs font-mono font-medium border transition-colors cursor-pointer ${
+                            isSelected
+                              ? 'border-[#1A1A18] bg-[#1A1A18] text-[#FBFBF9]'
+                              : 'border-[#1A1A18]/20 text-[#1A1A18] hover:border-[#1A1A18]'
+                          }`}
+                        >
+                          {sz}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
+              {/* Legacy Variant Selector */}
+              {!cfg?.enableColor && !cfg?.enableSize && quickViewProduct.variants && quickViewProduct.variants.length > 0 && (
                 <div className="mt-6 pt-5 border-t border-[#1A1A18]/10">
                   <label className="text-xs uppercase tracking-wider text-[#1A1A18] font-medium block mb-2">
                     Edition / Option:

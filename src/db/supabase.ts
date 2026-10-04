@@ -184,6 +184,7 @@ export function mapSupabaseToProduct(row: any): Product {
     published: row.published !== false,
     specifications: Array.isArray(row.specifications) ? row.specifications : [],
     variants: Array.isArray(row.variants) ? row.variants : [],
+    variantConfig: row.variant_config || row.variantConfig || (row.data && row.data.variantConfig) || undefined,
     rating: Number(row.rating || 5.0),
     reviewCount: Number(row.review_count || row.reviewCount || 0),
     seo: row.seo || { metaTitle: '', metaDescription: '', keywords: '' },

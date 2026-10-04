@@ -247,7 +247,10 @@ export const AdminOrders: React.FC = () => {
                     </td>
                     <td className="py-3.5 px-3 text-[#52524D] max-w-[220px]">
                       <p className="truncate font-medium">
-                        {o.items.map((i) => `${i.productName} (×${i.quantity})`).join(', ')}
+                        {o.items.map((i) => {
+                          const vText = i.color && i.size ? ` (${i.color}/${i.size})` : (i.color ? ` (${i.color})` : (i.size ? ` (${i.size})` : (i.variantName ? ` (${i.variantName})` : '')));
+                          return `${i.productName}${vText} (×${i.quantity})`;
+                        }).join(', ')}
                       </p>
                       <p className="text-[11px] text-[#71716A]">
                         {o.items.reduce((s, i) => s + i.quantity, 0)} total item(s)
@@ -479,9 +482,15 @@ export const AdminOrders: React.FC = () => {
                       )}
                       <div>
                         <p className="font-medium text-[#1A1A18]">{item.productName}</p>
-                        {item.variantName && (
+                        {(item.color || item.size) ? (
+                          <p className="text-[11px] text-[#71716A]">
+                            {item.color && <span>Colour: <strong className="text-[#1A1A18] font-medium">{item.color}</strong></span>}
+                            {item.color && item.size && <span> · </span>}
+                            {item.size && <span>Size: <strong className="text-[#1A1A18] font-medium">{item.size}</strong></span>}
+                          </p>
+                        ) : item.variantName ? (
                           <p className="text-[11px] text-[#71716A]">Edition: {item.variantName}</p>
-                        )}
+                        ) : null}
                         <p className="font-mono text-[10px] text-[#8A8A82]">SKU: {item.sku}</p>
                       </div>
                     </div>

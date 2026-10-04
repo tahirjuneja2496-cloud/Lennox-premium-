@@ -131,12 +131,13 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({ onCheckout, onExplore })
                 const maxStock = item.selectedVariant
                   ? item.selectedVariant.stock
                   : item.product.stock;
+                const itemKey = `${item.productId}-${item.variantId || 'base'}-${item.color || ''}-${item.size || ''}`;
                 return (
-                  <div key={`${item.productId}-${item.variantId || 'base'}`} className="py-4 flex gap-4">
+                  <div key={itemKey} className="py-4 flex gap-4">
                     {/* Thumbnail */}
                     <div className="w-20 h-24 bg-[#F4F4F0] shrink-0 overflow-hidden">
                       <img
-                        src={item.selectedVariant?.image || item.product.images?.[0]}
+                        src={item.image || item.selectedVariant?.image || item.product.images?.[0]}
                         alt={item.product.name}
                         referrerPolicy="no-referrer"
                         className="w-full h-full object-cover object-center"
@@ -151,7 +152,7 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({ onCheckout, onExplore })
                             {item.product.name}
                           </h4>
                           <button
-                            onClick={() => removeFromCart(item.productId, item.variantId)}
+                            onClick={() => removeFromCart(item.productId, item.variantId, item.color, item.size)}
                             className="text-[#8A8A82] hover:text-[#1A1A18] transition-colors p-1"
                             title="Remove item"
                           >
@@ -159,11 +160,17 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({ onCheckout, onExplore })
                           </button>
                         </div>
 
-                        {item.variantName && (
+                        {(item.color || item.size) ? (
+                          <p className="mt-0.5 text-[11px] text-[#71716A]">
+                            {item.color && <span>Colour: <strong className="text-[#1A1A18] font-medium">{item.color}</strong></span>}
+                            {item.color && item.size && <span> · </span>}
+                            {item.size && <span>Size: <strong className="text-[#1A1A18] font-medium">{item.size}</strong></span>}
+                          </p>
+                        ) : item.variantName ? (
                           <p className="mt-0.5 text-[11px] text-[#71716A]">
                             Edition: {item.variantName}
                           </p>
-                        )}
+                        ) : null}
 
                         <p className="mt-0.5 font-mono text-[10px] text-[#8A8A82]">
                           SKU: {item.selectedVariant?.sku || item.product.sku}
@@ -175,7 +182,7 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({ onCheckout, onExplore })
                         <div className="flex items-center border border-[#1A1A18]/20">
                           <button
                             onClick={() =>
-                              updateCartQuantity(item.productId, item.variantId, item.quantity - 1)
+                              updateCartQuantity(item.productId, item.variantId, item.quantity - 1, item.color, item.size)
                             }
                             className="px-2 py-0.5 text-xs text-[#1A1A18] hover:bg-[#EAEAE5] cursor-pointer"
                           >
@@ -186,7 +193,7 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({ onCheckout, onExplore })
                           </span>
                           <button
                             onClick={() =>
-                              updateCartQuantity(item.productId, item.variantId, item.quantity + 1)
+                              updateCartQuantity(item.productId, item.variantId, item.quantity + 1, item.color, item.size)
                             }
                             disabled={item.quantity >= maxStock}
                             className="px-2 py-0.5 text-xs text-[#1A1A18] hover:bg-[#EAEAE5] disabled:opacity-30 cursor-pointer"

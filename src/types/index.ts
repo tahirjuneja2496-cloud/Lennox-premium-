@@ -8,6 +8,21 @@ export interface ProductVariant {
   attributes: Record<string, string>;
 }
 
+export interface ProductColorVariant {
+  id: string;
+  name: string;
+  image?: string;
+  price?: number;
+}
+
+export interface ProductVariantConfig {
+  enableSize?: boolean;
+  enableColor?: boolean;
+  enableVariantPrice?: boolean;
+  availableSizes?: string[];
+  colors?: ProductColorVariant[];
+}
+
 export interface ProductSpecification {
   label: string;
   value: string;
@@ -42,6 +57,7 @@ export interface Product {
   published: boolean;
   specifications: ProductSpecification[];
   variants: ProductVariant[];
+  variantConfig?: ProductVariantConfig;
   rating: number;
   reviewCount: number;
   seo: ProductSEO;
@@ -65,6 +81,9 @@ export interface CartItem {
   product: Product;
   variantId?: string;
   variantName?: string;
+  color?: string;
+  size?: string;
+  image?: string;
   selectedVariant?: ProductVariant;
   quantity: number;
   price: number;
@@ -100,6 +119,8 @@ export interface OrderItem {
   sku: string;
   variantId?: string;
   variantName?: string;
+  color?: string;
+  size?: string;
   image: string;
   price: number;
   quantity: number;

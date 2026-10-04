@@ -161,6 +161,7 @@ export const api = {
       published: product.published !== false,
       specifications: Array.isArray(product.specifications) ? product.specifications : [],
       variants: Array.isArray(product.variants) ? product.variants : [],
+      variantConfig: product.variantConfig || undefined,
       rating: Number(product.rating || 5),
       reviewCount: Number(product.reviewCount || 0),
       seo: product.seo || { metaTitle: '', metaDescription: '', keywords: '' },

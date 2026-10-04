@@ -130,8 +130,10 @@ export const CheckoutView: React.FC<CheckoutViewProps> = ({ onBackToShopping, on
           productName: item.product.name,
           sku: item.selectedVariant?.sku || item.product.sku,
           variantId: item.variantId,
-          variantName: item.variantName,
-          image: item.selectedVariant?.image || item.product.images?.[0] || '',
+          variantName: item.variantName || (item.color && item.size ? `${item.color} / ${item.size}` : item.color || item.size || undefined),
+          color: item.color,
+          size: item.size,
+          image: item.image || item.selectedVariant?.image || item.product.images?.[0] || '',
           price: item.price,
           quantity: item.quantity,
           subtotal: item.price * item.quantity
@@ -407,7 +409,7 @@ export const CheckoutView: React.FC<CheckoutViewProps> = ({ onBackToShopping, on
                 const displayImg = img.startsWith('/src/assets/images/') ? img.replace('/src/assets/images/', '/images/') : img;
                 return (
                   <div
-                    key={`${item.productId}-${item.variantId || 'base'}`}
+                    key={`${item.productId}-${item.variantId || 'base'}-${item.color || ''}-${item.size || ''}`}
                     className="py-3 flex items-center gap-3 text-xs"
                   >
                     <img
@@ -418,9 +420,15 @@ export const CheckoutView: React.FC<CheckoutViewProps> = ({ onBackToShopping, on
                     />
                     <div className="flex-1 min-w-0">
                       <p className="font-medium text-[#1A1A18] truncate">{item.product.name}</p>
-                      {item.variantName && (
+                      {(item.color || item.size) ? (
+                        <p className="text-[11px] text-[#71716A]">
+                          {item.color && <span>Colour: <strong className="text-[#1A1A18] font-medium">{item.color}</strong></span>}
+                          {item.color && item.size && <span> · </span>}
+                          {item.size && <span>Size: <strong className="text-[#1A1A18] font-medium">{item.size}</strong></span>}
+                        </p>
+                      ) : item.variantName ? (
                         <p className="text-[11px] text-[#71716A]">Edition: {item.variantName}</p>
-                      )}
+                      ) : null}
                       <p className="text-[11px] text-[#71716A]">Quantity: {item.quantity}</p>
                     </div>
                     <span className="font-semibold tabular-nums text-[#1A1A18]">

@@ -46,6 +46,17 @@ export const ProductDetailView: React.FC<ProductDetailViewProps> = ({
   const [selectedVariant, setSelectedVariant] = useState<ProductVariant | undefined>(
     product.variants?.[0]
   );
+
+  const cfg = product.variantConfig;
+  const [selectedColor, setSelectedColor] = useState<string | undefined>(
+    cfg?.enableColor && cfg.colors && cfg.colors.length > 0 ? cfg.colors[0].name : undefined
+  );
+  const [selectedSize, setSelectedSize] = useState<string | undefined>(
+    cfg?.enableSize && cfg.availableSizes && cfg.availableSizes.length > 0
+      ? cfg.availableSizes[0]
+      : undefined
+  );
+
   const [quantity, setQuantity] = useState(1);
   const [sharePopoverOpen, setSharePopoverOpen] = useState(false);
   const [activeTab, setActiveTab] = useState<'specs' | 'provenance' | 'shipping'>('specs');
@@ -86,6 +97,24 @@ export const ProductDetailView: React.FC<ProductDetailViewProps> = ({
     setActiveImageIndex(0);
     setSelectedVariant(product.variants?.[0]);
     setQuantity(1);
+
+    const newCfg = product.variantConfig;
+    if (newCfg?.enableColor && newCfg.colors && newCfg.colors.length > 0) {
+      setSelectedColor(newCfg.colors[0].name);
+      if (newCfg.colors[0].image) {
+        const cleaned = cleanUrl(newCfg.colors[0].image);
+        const idx = images.findIndex((img) => img === cleaned);
+        if (idx > -1) setActiveImageIndex(idx);
+      }
+    } else {
+      setSelectedColor(undefined);
+    }
+
+    if (newCfg?.enableSize && newCfg.availableSizes && newCfg.availableSizes.length > 0) {
+      setSelectedSize(newCfg.availableSizes[0]);
+    } else {
+      setSelectedSize(undefined);
+    }
 
     document.title = `${product.name} | Atelier V`;
 
@@ -138,11 +167,44 @@ export const ProductDetailView: React.FC<ProductDetailViewProps> = ({
     return () => observer.disconnect();
   }, []);
 
-  const currentPrice = selectedVariant?.price ?? product.price;
+  const selectedColorObj = cfg?.enableColor && selectedColor
+    ? cfg.colors?.find((c) => c.name.toLowerCase() === selectedColor.toLowerCase())
+    : undefined;
+
+  const currentPrice =
+    cfg?.enableVariantPrice && selectedColorObj && typeof selectedColorObj.price === 'number' && selectedColorObj.price > 0
+      ? selectedColorObj.price
+      : (selectedVariant?.price ?? product.price);
+
   const currentSku = selectedVariant?.sku || product.sku;
   const currentStock = selectedVariant?.stock ?? product.stock;
   const isOutOfStock = currentStock <= 0;
   const isLowStock = currentStock > 0 && currentStock <= (product.lowStockThreshold || 3);
+
+  const handleSelectColor = (colorName: string) => {
+    setSelectedColor(colorName);
+    const matched = cfg?.colors?.find((c) => c.name.toLowerCase() === colorName.toLowerCase());
+    if (matched && matched.image) {
+      const cleaned = cleanUrl(matched.image);
+      const imgIdx = images.findIndex((img) => img === cleaned);
+      if (imgIdx > -1) {
+        setActiveImageIndex(imgIdx);
+      }
+    }
+  };
+
+  const handleThumbnailClick = (idx: number) => {
+    setActiveImageIndex(idx);
+    const currentImg = images[idx];
+    if (cfg?.enableColor && cfg.colors && currentImg) {
+      const matched = cfg.colors.find(
+        (c) => c.image && cleanUrl(c.image) === cleanUrl(currentImg)
+      );
+      if (matched) {
+        setSelectedColor(matched.name);
+      }
+    }
+  };
 
   const handleMouseMove = (e: React.MouseEvent<HTMLDivElement>) => {
     if (!imageContainerRef.current) return;
@@ -154,12 +216,22 @@ export const ProductDetailView: React.FC<ProductDetailViewProps> = ({
 
   const handleAddToCart = () => {
     if (isOutOfStock) return;
-    addToCart(product, selectedVariant, quantity);
+    addToCart(product, selectedVariant, quantity, {
+      color: cfg?.enableColor ? selectedColor : undefined,
+      size: cfg?.enableSize ? selectedSize : undefined,
+      image: activeImage,
+      price: currentPrice
+    });
   };
 
   const handleInstantBuy = () => {
     if (isOutOfStock) return;
-    addToCart(product, selectedVariant, quantity);
+    addToCart(product, selectedVariant, quantity, {
+      color: cfg?.enableColor ? selectedColor : undefined,
+      size: cfg?.enableSize ? selectedSize : undefined,
+      image: activeImage,
+      price: currentPrice
+    });
     onCheckout();
   };
 
@@ -263,7 +335,7 @@ export const ProductDetailView: React.FC<ProductDetailViewProps> = ({
               {images.map((img, idx) => (
                 <button
                   key={idx}
-                  onClick={() => setActiveImageIndex(idx)}
+                  onClick={() => handleThumbnailClick(idx)}
                   className={`w-16 h-20 sm:w-20 sm:h-24 bg-[#F4F4F0] overflow-hidden border-2 transition-all cursor-pointer shrink-0 ${
                     activeImageIndex === idx ? 'border-[#1A1A18]' : 'border-transparent opacity-75 hover:opacity-100'
                   }`}
@@ -388,8 +460,82 @@ export const ProductDetailView: React.FC<ProductDetailViewProps> = ({
             {product.shortDescription || product.description}
           </p>
 
-          {/* Variant Selection */}
-          {product.variants && product.variants.length > 0 && (
+          {/* Optional Colourways Selector */}
+          {cfg?.enableColor && cfg.colors && cfg.colors.length > 0 && (
+            <div className="pt-4 border-t border-[#1A1A18]/10 space-y-2">
+              <div className="flex justify-between items-center text-xs">
+                <span className="uppercase tracking-wider font-medium text-[#1A1A18]">
+                  Colour:
+                </span>
+                <span className="text-[#71716A] font-medium">{selectedColor}</span>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                {cfg.colors.map((c) => {
+                  const isSelected = selectedColor?.toLowerCase() === c.name.toLowerCase();
+                  return (
+                    <button
+                      key={c.id || c.name}
+                      type="button"
+                      onClick={() => handleSelectColor(c.name)}
+                      className={`px-3.5 py-2 text-xs font-medium border transition-all cursor-pointer flex items-center gap-2 ${
+                        isSelected
+                          ? 'border-[#1A1A18] bg-[#1A1A18] text-[#FBFBF9]'
+                          : 'border-[#1A1A18]/20 bg-white text-[#1A1A18] hover:border-[#1A1A18]'
+                      }`}
+                    >
+                      {c.image && (
+                        <img
+                          src={cleanUrl(c.image)}
+                          alt={c.name}
+                          className="w-4 h-4 object-cover rounded-xs border border-white/20"
+                        />
+                      )}
+                      <span>{c.name}</span>
+                      {cfg.enableVariantPrice && c.price && c.price > 0 && (
+                        <span className={`text-[10px] tabular-nums ${isSelected ? 'opacity-80' : 'text-[#71716A]'}`}>
+                          ({formatPrice(c.price)})
+                        </span>
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {/* Optional Size Selector */}
+          {cfg?.enableSize && cfg.availableSizes && cfg.availableSizes.length > 0 && (
+            <div className="pt-4 border-t border-[#1A1A18]/10 space-y-2">
+              <div className="flex justify-between items-center text-xs">
+                <span className="uppercase tracking-wider font-medium text-[#1A1A18]">
+                  Size:
+                </span>
+                <span className="text-[#71716A] font-mono font-medium">{selectedSize}</span>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                {cfg.availableSizes.map((sz) => {
+                  const isSelected = selectedSize === sz;
+                  return (
+                    <button
+                      key={sz}
+                      type="button"
+                      onClick={() => setSelectedSize(sz)}
+                      className={`min-w-[42px] px-3.5 py-2 text-xs font-mono font-medium border transition-all cursor-pointer text-center ${
+                        isSelected
+                          ? 'border-[#1A1A18] bg-[#1A1A18] text-[#FBFBF9]'
+                          : 'border-[#1A1A18]/20 bg-white text-[#1A1A18] hover:border-[#1A1A18]'
+                      }`}
+                    >
+                      {sz}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {/* Legacy Variant Selection (Only if neither colour nor size enabled, and legacy variants exist) */}
+          {!cfg?.enableColor && !cfg?.enableSize && product.variants && product.variants.length > 0 && (
             <div className="pt-4 border-t border-[#1A1A18]/10 space-y-2">
               <div className="flex justify-between items-center text-xs">
                 <span className="uppercase tracking-wider font-medium text-[#1A1A18]">

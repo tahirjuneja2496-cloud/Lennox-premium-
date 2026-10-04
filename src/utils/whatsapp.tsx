@@ -120,11 +120,15 @@ export function generateWhatsAppMessage({
   if (Array.isArray(order.items) && order.items.length > 0) {
     if (order.items.length === 1) {
       const it = order.items[0];
+      const vDetail = it.color && it.size ? ` (${it.color} / ${it.size})` : (it.color ? ` (${it.color})` : (it.size ? ` (${it.size})` : (it.variantName ? ` (${it.variantName})` : '')));
       const qtyStr = it.quantity > 1 ? ` (×${it.quantity})` : '';
-      lines.push(`📦 Product: ${it.productName}${qtyStr}`);
+      lines.push(`📦 Product: ${it.productName}${vDetail}${qtyStr}`);
     } else {
       const prodList = order.items
-        .map((it) => `${it.productName}${it.quantity > 1 ? ` (×${it.quantity})` : ''}`)
+        .map((it) => {
+          const vDetail = it.color && it.size ? ` (${it.color} / ${it.size})` : (it.color ? ` (${it.color})` : (it.size ? ` (${it.size})` : (it.variantName ? ` (${it.variantName})` : '')));
+          return `${it.productName}${vDetail}${it.quantity > 1 ? ` (×${it.quantity})` : ''}`;
+        })
         .join(', ');
       lines.push(`📦 Products: ${prodList}`);
     }
