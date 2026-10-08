@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { ArrowRight, Compass, ShieldCheck, Sparkles } from 'lucide-react';
 import { useStore } from '../context/StoreContext';
 import { ProductCard } from '../components/ProductCard';
@@ -10,19 +10,53 @@ interface HomeViewProps {
 }
 
 export const HomeView: React.FC<HomeViewProps> = ({ onNavigate, onSelectProduct }) => {
-  const { settings, products, categories } = useStore();
-  const [activeTab, setActiveTab] = useState<'featured' | 'newArrivals' | 'bestsellers'>('featured');
+  const { settings, products, categories, refreshData } = useStore();
+  const [activeTab, setActiveTab] = useState<'all' | 'newArrivals' | 'featured' | 'bestsellers'>('all');
 
-  const featuredProducts = products.filter((p) => p.featured && p.published);
-  const newArrivals = products.filter((p) => p.newArrival && p.published);
-  const bestsellers = products.filter((p) => p.bestseller && p.published);
+  // Refetch live products from Supabase on mount / refresh
+  useEffect(() => {
+    refreshData().catch(() => {});
+  }, [refreshData]);
 
-  const displayedProducts =
-    activeTab === 'featured'
-      ? featuredProducts.length > 0 ? featuredProducts : products.filter(p => p.published).slice(0, 4)
-      : activeTab === 'newArrivals'
-      ? newArrivals.length > 0 ? newArrivals : products.filter(p => p.published).slice(0, 4)
-      : bestsellers.length > 0 ? bestsellers : products.filter(p => p.published).slice(0, 4);
+  // All published products from Supabase, sorted newest first
+  const publishedProducts = useMemo(() => {
+    return products
+      .filter((p) => p.published)
+      .sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());
+  }, [products]);
+
+  // New Arrivals: products flagged as new arrival OR sorted newest first
+  const newArrivals = useMemo(() => {
+    const flagged = publishedProducts.filter((p) => p.newArrival !== false);
+    return flagged.length > 0 ? flagged : publishedProducts;
+  }, [publishedProducts]);
+
+  // Featured Editions: flagged as featured, fallback to published products
+  const featuredProducts = useMemo(() => {
+    const flagged = publishedProducts.filter((p) => p.featured);
+    return flagged.length > 0 ? flagged : publishedProducts;
+  }, [publishedProducts]);
+
+  // Bestsellers: flagged as bestseller, fallback to published products
+  const bestsellers = useMemo(() => {
+    const flagged = publishedProducts.filter((p) => p.bestseller);
+    return flagged.length > 0 ? flagged : publishedProducts;
+  }, [publishedProducts]);
+
+  const displayedProducts = useMemo(() => {
+    switch (activeTab) {
+      case 'all':
+        return publishedProducts;
+      case 'newArrivals':
+        return newArrivals;
+      case 'featured':
+        return featuredProducts;
+      case 'bestsellers':
+        return bestsellers;
+      default:
+        return publishedProducts;
+    }
+  }, [activeTab, publishedProducts, newArrivals, featuredProducts, bestsellers]);
 
   const heroImage = settings.hero?.image?.startsWith('/src/assets/images/')
     ? settings.hero.image.replace('/src/assets/images/', '/images/')
@@ -133,16 +167,16 @@ export const HomeView: React.FC<HomeViewProps> = ({ onNavigate, onSelectProduct 
       <section className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-8">
           {/* Segmented filter controls */}
-          <div className="flex items-center gap-1 p-1 bg-[#EAEAE5] max-w-fit">
+          <div className="flex items-center gap-1 p-1 bg-[#EAEAE5] max-w-fit flex-wrap">
             <button
-              onClick={() => setActiveTab('featured')}
+              onClick={() => setActiveTab('all')}
               className={`px-4 py-2 text-xs uppercase tracking-wider font-medium transition-colors cursor-pointer ${
-                activeTab === 'featured'
+                activeTab === 'all'
                   ? 'bg-[#1A1A18] text-[#FBFBF9]'
                   : 'text-[#52524D] hover:text-[#1A1A18]'
               }`}
             >
-              Featured Editions
+              All Products
             </button>
             <button
               onClick={() => setActiveTab('newArrivals')}
@@ -153,6 +187,16 @@ export const HomeView: React.FC<HomeViewProps> = ({ onNavigate, onSelectProduct 
               }`}
             >
               New Arrivals
+            </button>
+            <button
+              onClick={() => setActiveTab('featured')}
+              className={`px-4 py-2 text-xs uppercase tracking-wider font-medium transition-colors cursor-pointer ${
+                activeTab === 'featured'
+                  ? 'bg-[#1A1A18] text-[#FBFBF9]'
+                  : 'text-[#52524D] hover:text-[#1A1A18]'
+              }`}
+            >
+              Featured Editions
             </button>
             <button
               onClick={() => setActiveTab('bestsellers')}
@@ -170,21 +214,36 @@ export const HomeView: React.FC<HomeViewProps> = ({ onNavigate, onSelectProduct 
             onClick={() => onNavigate('shop')}
             className="text-xs uppercase tracking-widest font-semibold text-[#1A1A18] hover:opacity-70 transition-opacity flex items-center gap-1.5 cursor-pointer"
           >
-            <span>View All Creations ({products.filter(p => p.published).length})</span>
+            <span>View All Creations ({publishedProducts.length})</span>
             <ArrowRight className="w-3.5 h-3.5" />
           </button>
         </div>
 
         {/* Product Grid */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6 sm:gap-8">
-          {displayedProducts.map((product) => (
-            <ProductCard
-              key={product.id}
-              product={product}
-              onSelect={onSelectProduct}
-            />
-          ))}
-        </div>
+        {displayedProducts.length === 0 ? (
+          <div className="py-16 text-center bg-[#F4F4F0] border border-[#1A1A18]/10 p-8">
+            <p className="font-serif text-xl text-[#1A1A18]">No creations currently listed in this category.</p>
+            <p className="text-xs text-[#71716A] mt-2">
+              Explore our full catalogue or check back shortly for new editions.
+            </p>
+            <button
+              onClick={() => onNavigate('shop')}
+              className="mt-5 py-2.5 px-6 bg-[#1A1A18] text-[#FBFBF9] text-xs uppercase tracking-wider font-semibold cursor-pointer"
+            >
+              Explore Full Collection
+            </button>
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6 sm:gap-8">
+            {displayedProducts.map((product) => (
+              <ProductCard
+                key={product.id}
+                product={product}
+                onSelect={onSelectProduct}
+              />
+            ))}
+          </div>
+        )}
       </section>
 
       {/* Editorial Craftsmanship Manifesto */}

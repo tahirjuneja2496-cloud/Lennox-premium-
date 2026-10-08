@@ -64,6 +64,8 @@ let lastSupabaseStatus: {
 
 export const getSupabaseStatus = () => lastSupabaseStatus;
 
+let memoryCachedProducts: Product[] | null = null;
+
 export const api = {
   // Settings
   async getSettings(): Promise<StoreSettings> {
@@ -104,15 +106,21 @@ export const api = {
       error: spResult.error
     };
 
+    if (spResult.error) {
+      console.error('[Atelier V] Supabase getProducts error:', spResult.error);
+    }
+
     if (spResult.products && spResult.products.length > 0) {
+      memoryCachedProducts = spResult.products;
       return spResult.products;
     }
 
     // 2. If table exists but has 0 products, auto-seed Supabase with catalog
-    if (spResult.connected && !spResult.tableMissing && spResult.products && spResult.products.length === 0) {
+    if (spResult.connected && !spResult.tableMissing && !spResult.error && spResult.products && spResult.products.length === 0) {
       await seedProductsToSupabase(INITIAL_PRODUCTS);
       const recheck = await getProductsFromSupabase();
       if (recheck.products && recheck.products.length > 0) {
+        memoryCachedProducts = recheck.products;
         return recheck.products;
       }
     }
@@ -123,11 +131,16 @@ export const api = {
       if (res.ok) {
         const data = await res.json();
         if (Array.isArray(data) && data.length > 0) {
+          memoryCachedProducts = data;
           return data;
         }
       }
     } catch {
       // Continue
+    }
+
+    if (memoryCachedProducts && memoryCachedProducts.length > 0) {
+      return memoryCachedProducts;
     }
 
     return INITIAL_PRODUCTS;
@@ -178,6 +191,8 @@ export const api = {
       throw new Error(spResult.error || 'Failed to save product to Supabase');
     }
 
+    memoryCachedProducts = null;
+
     // Also persist through backend API if reachable
     try {
       fetch('/api/products', {
@@ -217,6 +232,8 @@ export const api = {
       throw new Error(spResult.error || 'Failed to update product in Supabase');
     }
 
+    memoryCachedProducts = null;
+
     try {
       fetch(`/api/products/${id}`, {
         method: 'PUT',
@@ -237,6 +254,8 @@ export const api = {
       }
       throw new Error(spResult.error || 'Failed to delete product from Supabase');
     }
+
+    memoryCachedProducts = null;
 
     try {
       fetch(`/api/products/${id}`, {

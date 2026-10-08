@@ -143,21 +143,39 @@ export async function uploadImageToSupabase(
 
 export function mapSupabaseToProduct(row: any): Product {
   if (row.data && typeof row.data === 'object' && row.data.name) {
+    const d = row.data;
     return {
-      ...row.data,
-      id: String(row.id || row.data.id),
-      sku: String(row.sku || row.data.sku || `SKU-${row.id}`),
-      slug: String(row.slug || row.data.slug || `creation-${row.id}`),
-      name: String(row.name || row.data.name || 'Untitled Creation'),
-      price: Number(row.price ?? row.data.price ?? 0),
-      originalPrice: Number(row.original_price ?? row.data.originalPrice ?? row.price ?? 0),
-      discountPercent: Number(row.discount_percent ?? row.data.discountPercent ?? 0),
-      stock: Number(row.stock ?? row.data.stock ?? 0),
-      category: String(row.category || row.data.category || 'Objects'),
-      published: row.published !== undefined ? Boolean(row.published) : Boolean(row.data.published ?? true),
-      images: Array.isArray(row.images) && row.images.length > 0 ? row.images : (row.data.images || []),
-      createdAt: row.created_at || row.data.createdAt || new Date().toISOString(),
-      updatedAt: row.updated_at || row.data.updatedAt || new Date().toISOString()
+      ...d,
+      id: String(row.id || d.id),
+      sku: String(row.sku || d.sku || `SKU-${row.id}`),
+      slug: String(row.slug || d.slug || `creation-${row.id}`),
+      name: String(row.name || d.name || 'Untitled Creation'),
+      shortDescription: String(row.short_description || d.shortDescription || ''),
+      description: String(row.description || d.description || ''),
+      price: Number(row.price ?? d.price ?? 0),
+      originalPrice: Number(row.original_price ?? d.originalPrice ?? row.price ?? d.price ?? 0),
+      discountPercent: Number(row.discount_percent ?? d.discountPercent ?? 0),
+      stock: Number(row.stock ?? d.stock ?? 0),
+      lowStockThreshold: Number(row.low_stock_threshold ?? d.lowStockThreshold ?? 3),
+      category: String(row.category || d.category || 'Objects'),
+      subcategory: row.subcategory || d.subcategory || undefined,
+      brand: String(row.brand || d.brand || 'Atelier V Editions'),
+      tags: Array.isArray(row.tags) ? row.tags : (Array.isArray(d.tags) ? d.tags : []),
+      published: row.published !== undefined ? Boolean(row.published) : Boolean(d.published !== false),
+      featured: row.featured !== undefined ? Boolean(row.featured) : Boolean(d.featured),
+      bestseller: row.bestseller !== undefined ? Boolean(row.bestseller) : Boolean(d.bestseller),
+      newArrival: row.new_arrival !== undefined 
+        ? Boolean(row.new_arrival) 
+        : (row.newArrival !== undefined ? Boolean(row.newArrival) : Boolean(d.newArrival !== false)),
+      images: Array.isArray(row.images) && row.images.length > 0 ? row.images : (Array.isArray(d.images) && d.images.length > 0 ? d.images : []),
+      specifications: Array.isArray(row.specifications) ? row.specifications : (Array.isArray(d.specifications) ? d.specifications : []),
+      variants: Array.isArray(row.variants) ? row.variants : (Array.isArray(d.variants) ? d.variants : []),
+      variantConfig: row.variant_config || d.variantConfig || undefined,
+      rating: Number(row.rating ?? d.rating ?? 5.0),
+      reviewCount: Number(row.review_count ?? d.reviewCount ?? 0),
+      seo: row.seo || d.seo || { metaTitle: '', metaDescription: '', keywords: '' },
+      createdAt: row.created_at || d.createdAt || new Date().toISOString(),
+      updatedAt: row.updated_at || d.updatedAt || new Date().toISOString()
     };
   }
 
@@ -261,8 +279,11 @@ export async function getProductsFromSupabase(): Promise<SupabaseProductsResult>
       return { products: [], connected: true, tableMissing: false };
     }
 
+    const mapped = data.map(mapSupabaseToProduct);
+    mapped.sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());
+
     return {
-      products: data.map(mapSupabaseToProduct),
+      products: mapped,
       connected: true,
       tableMissing: false
     };

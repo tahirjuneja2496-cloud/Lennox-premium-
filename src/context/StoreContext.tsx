@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
+import React, { createContext, useContext, useState, useEffect, useCallback, ReactNode } from 'react';
 import { Product, Category, CartItem, ProductVariant, StoreSettings } from '../types';
 import { api } from '../services/api';
 import { INITIAL_SETTINGS } from '../data/initialData';
@@ -110,7 +110,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     }
   }, [wishlist]);
 
-  const refreshData = async () => {
+  const refreshData = useCallback(async () => {
     try {
       const [sData, pData, cData] = await Promise.all([
         api.getSettings(),
@@ -125,7 +125,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
 
   useEffect(() => {
     refreshData();
