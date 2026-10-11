@@ -56,6 +56,12 @@ const getAuthHeaders = (): Record<string, string> => {
   return headers;
 };
 
+export const apiFetch = (path: string, init?: RequestInit): Promise<Response> => {
+  const base = typeof window !== 'undefined' ? '' : 'http://localhost:3000';
+  const url = path.startsWith('http') ? path : `${base}${path}`;
+  return fetch(url, init);
+};
+
 // Database connection state monitor for admin feedback
 let lastSupabaseStatus: {
   connected: boolean;
@@ -454,9 +460,28 @@ export const api = {
 
   // Coupons
   async getCoupons(): Promise<Coupon[]> {
-    // 1. Try server endpoint
+    // 1. Direct Supabase read (Authoritative source of truth across all devices)
+    if (isSupabaseConnected()) {
+      try {
+        const spRes = await getCouponsFromSupabase();
+        if (spRes.connected && !spRes.tableMissing && Array.isArray(spRes.coupons)) {
+          if (spRes.coupons.length > 0) {
+            if (typeof window !== 'undefined') {
+              try {
+                localStorage.setItem('atelierv_coupons_cache', JSON.stringify(spRes.coupons));
+              } catch {}
+            }
+            return spRes.coupons;
+          }
+        }
+      } catch (e) {
+        console.warn('[Atelier V] Direct Supabase coupon fetch notice:', e);
+      }
+    }
+
+    // 2. Try server endpoint
     try {
-      const res = await fetch('/api/coupons', {
+      const res = await apiFetch('/api/coupons', {
         headers: getAuthHeaders()
       });
       if (res.ok) {
@@ -474,23 +499,6 @@ export const api = {
       console.warn('API getCoupons notice:', err);
     }
 
-    // 2. Direct Supabase read if server is unreachable
-    if (isSupabaseConnected()) {
-      try {
-        const spRes = await getCouponsFromSupabase();
-        if (spRes.connected && !spRes.tableMissing && spRes.coupons.length > 0) {
-          if (typeof window !== 'undefined') {
-            try {
-              localStorage.setItem('atelierv_coupons_cache', JSON.stringify(spRes.coupons));
-            } catch {}
-          }
-          return spRes.coupons;
-        }
-      } catch (e) {
-        console.warn('Direct Supabase coupon fetch notice:', e);
-      }
-    }
-
     // 3. Check client localStorage cache
     if (typeof window !== 'undefined') {
       try {
@@ -506,11 +514,6 @@ export const api = {
   },
 
   async getCouponDatabaseStatus(): Promise<{ supabaseConnected: boolean; tableMissing: boolean; count: number; error?: string; migrationSql: string }> {
-    try {
-      const res = await fetch('/api/coupons/status');
-      if (res.ok) return await res.json();
-    } catch {}
-
     if (isSupabaseConnected()) {
       try {
         const sp = await getCouponsFromSupabase();
@@ -523,6 +526,11 @@ export const api = {
         };
       } catch {}
     }
+
+    try {
+      const res = await apiFetch('/api/coupons/status');
+      if (res.ok) return await res.json();
+    } catch {}
 
     return {
       supabaseConnected: false,
@@ -539,8 +547,12 @@ export const api = {
     }
 
     const now = new Date().toISOString();
+    const coupId = (coupon.id && String(coupon.id).trim())
+      ? String(coupon.id).trim()
+      : `coup-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
+
     const newCoupon: Coupon = {
-      id: coupon.id || `coup-${Date.now()}`,
+      id: coupId,
       code: rawCode,
       discountType: coupon.discountType === 'fixed' ? 'fixed' : 'percentage',
       discountValue: Math.max(0, Number(coupon.discountValue ?? 10)),
@@ -555,36 +567,33 @@ export const api = {
       updatedAt: now
     };
 
-    // 1. Direct Supabase save if client connected
+    console.log('[Atelier V] Initiating createCoupon for:', newCoupon.code, newCoupon);
+
+    // 1. Direct Supabase save (Primary persistent storage)
     if (isSupabaseConnected()) {
-      try {
-        const spRes = await saveCouponToSupabase(newCoupon);
-        if (spRes.error && !spRes.tableMissing) {
-          console.warn('[Atelier V] Supabase coupon save notice:', spRes.error);
+      const spRes = await saveCouponToSupabase(newCoupon);
+      console.log('[Atelier V] Supabase saveCoupon response:', spRes);
+      if (!spRes.success) {
+        const errorMsg = spRes.error || 'Failed to persist coupon in Supabase database';
+        console.error('[Atelier V] Supabase save error detail:', errorMsg);
+        if (errorMsg.includes('duplicate key') || errorMsg.includes('already exists')) {
+          throw new Error(`Coupon code '${rawCode}' already exists in database`);
         }
-      } catch (e) {
-        console.warn('[Atelier V] Client Supabase coupon save notice:', e);
+        throw new Error(errorMsg);
       }
+    } else {
+      console.warn('[Atelier V] Supabase not connected during createCoupon; using local fallback');
     }
 
-    // 2. Server API call
-    let serverSaved: Coupon = newCoupon;
+    // 2. Server API sync (keep backend database in sync)
     try {
-      const res = await fetch('/api/coupons', {
+      apiFetch('/api/coupons', {
         method: 'POST',
         headers: getAuthHeaders(),
         body: JSON.stringify(newCoupon)
-      });
-      if (!res.ok) {
-        const errData = await res.json().catch(() => ({}));
-        throw new Error(errData.error || `Failed to create coupon (HTTP ${res.status})`);
-      }
-      serverSaved = await res.json();
-    } catch (err: any) {
-      if (err.message && err.message.includes('already exists')) {
-        throw err;
-      }
-      console.warn('Server coupon create warning, retaining local persistence:', err);
+      }).catch((e) => console.warn('Background server sync notice:', e));
+    } catch {
+      // Background sync is non-blocking
     }
 
     // 3. Update localStorage cache
@@ -592,42 +601,42 @@ export const api = {
       try {
         const cached = localStorage.getItem('atelierv_coupons_cache');
         const list: Coupon[] = cached ? JSON.parse(cached) : [];
-        const filtered = list.filter(c => c.code.toUpperCase() !== serverSaved.code.toUpperCase());
-        localStorage.setItem('atelierv_coupons_cache', JSON.stringify([serverSaved, ...filtered]));
+        const filtered = list.filter(c => c.code.toUpperCase() !== newCoupon.code.toUpperCase());
+        localStorage.setItem('atelierv_coupons_cache', JSON.stringify([newCoupon, ...filtered]));
       } catch {}
     }
 
-    return serverSaved;
+    return newCoupon;
   },
 
   async updateCoupon(id: string, coupon: Partial<Coupon>): Promise<Coupon> {
     const cleanId = String(id).trim();
+    const updatedCoupon: Coupon = {
+      id: cleanId,
+      ...coupon,
+      code: coupon.code ? String(coupon.code).trim().toUpperCase() : '',
+      updatedAt: new Date().toISOString()
+    } as Coupon;
+
+    console.log('[Atelier V] Initiating updateCoupon for:', cleanId, updatedCoupon);
 
     // 1. Update in Supabase
     if (isSupabaseConnected()) {
-      try {
-        await saveCouponToSupabase({ id: cleanId, ...coupon } as Coupon);
-      } catch (e) {
-        console.warn('Supabase coupon update notice:', e);
+      const spRes = await saveCouponToSupabase(updatedCoupon);
+      console.log('[Atelier V] Supabase updateCoupon response:', spRes);
+      if (!spRes.success) {
+        throw new Error(spRes.error || 'Failed to update coupon in Supabase database');
       }
     }
 
     // 2. Server API call
-    let updated: Coupon = { id: cleanId, ...coupon } as Coupon;
     try {
-      const res = await fetch(`/api/coupons/${encodeURIComponent(cleanId)}`, {
+      apiFetch(`/api/coupons/${encodeURIComponent(cleanId)}`, {
         method: 'PUT',
         headers: getAuthHeaders(),
-        body: JSON.stringify(coupon)
-      });
-      if (!res.ok) {
-        const errData = await res.json().catch(() => ({}));
-        throw new Error(errData.error || `Failed to update coupon (HTTP ${res.status})`);
-      }
-      updated = await res.json();
-    } catch (err: any) {
-      console.warn('Server coupon update notice:', err);
-    }
+        body: JSON.stringify(updatedCoupon)
+      }).catch(() => {});
+    } catch {}
 
     // 3. Update localStorage cache
     if (typeof window !== 'undefined') {
@@ -635,13 +644,13 @@ export const api = {
         const cached = localStorage.getItem('atelierv_coupons_cache');
         if (cached) {
           const list: Coupon[] = JSON.parse(cached);
-          const mapped = list.map(c => (c.id === cleanId || c.code.toUpperCase() === (coupon.code || '').toUpperCase() ? { ...c, ...updated } : c));
+          const mapped = list.map(c => (c.id === cleanId || c.code.toUpperCase() === (coupon.code || '').toUpperCase() ? { ...c, ...updatedCoupon } : c));
           localStorage.setItem('atelierv_coupons_cache', JSON.stringify(mapped));
         }
       } catch {}
     }
 
-    return updated;
+    return updatedCoupon;
   },
 
   async deleteCoupon(id: string): Promise<boolean> {
@@ -649,26 +658,19 @@ export const api = {
 
     // 1. Delete in Supabase
     if (isSupabaseConnected()) {
-      try {
-        await deleteCouponFromSupabase(cleanId);
-      } catch (e) {
-        console.warn('Supabase coupon delete notice:', e);
+      const spRes = await deleteCouponFromSupabase(cleanId);
+      if (!spRes.success) {
+        throw new Error(spRes.error || 'Failed to delete coupon from Supabase database');
       }
     }
 
     // 2. Server API call
     try {
-      const res = await fetch(`/api/coupons/${encodeURIComponent(cleanId)}`, {
+      apiFetch(`/api/coupons/${encodeURIComponent(cleanId)}`, {
         method: 'DELETE',
         headers: getAuthHeaders()
-      });
-      if (!res.ok) {
-        const errData = await res.json().catch(() => ({}));
-        throw new Error(errData.error || `Failed to delete coupon (HTTP ${res.status})`);
-      }
-    } catch (err: any) {
-      console.warn('Server coupon delete notice:', err);
-    }
+      }).catch(() => {});
+    } catch {}
 
     // 3. Update localStorage cache
     if (typeof window !== 'undefined') {
@@ -693,7 +695,7 @@ export const api = {
 
     // 1. Try server-side validation (authoritative)
     try {
-      const res = await fetch('/api/coupons/validate', {
+      const res = await apiFetch('/api/coupons/validate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ code: cleanCode, subtotal: cartTotal, cartTotal })

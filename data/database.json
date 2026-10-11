@@ -645,6 +645,35 @@
   ],
   "coupons": [
     {
+      "id": "coup-1791712222498-9nbbb",
+      "code": "LENNOX25",
+      "discountType": "percentage",
+      "discountValue": 25,
+      "minOrderValue": 500,
+      "maxDiscount": 1000,
+      "startDate": "2026-10-11",
+      "expiresAt": "2027-10-11",
+      "usageLimit": 100,
+      "usedCount": 0,
+      "active": true,
+      "createdAt": "2026-10-11T09:50:22.961Z",
+      "updatedAt": "2026-10-11T09:50:22.961Z"
+    },
+    {
+      "id": "coup-1791711625947",
+      "code": "TESTNEW123",
+      "discountType": "percentage",
+      "discountValue": 15,
+      "minOrderValue": 200,
+      "startDate": "2026-10-11",
+      "expiresAt": "2027-10-11",
+      "usageLimit": 100,
+      "usedCount": 0,
+      "active": true,
+      "createdAt": "2026-10-11T09:40:25.947Z",
+      "updatedAt": "2026-10-11T09:40:25.947Z"
+    },
+    {
       "id": "coup-001",
       "code": "LUXE15",
       "discountType": "percentage",
@@ -677,6 +706,51 @@
       "usageLimit": 500,
       "usedCount": 88,
       "active": true
+    },
+    {
+      "id": "coup-diag-1791711513937",
+      "code": "DIAGNOSTIC1",
+      "discountType": "percentage",
+      "discountValue": 15,
+      "minOrderValue": 200,
+      "maxDiscount": 300,
+      "startDate": "2026-10-11T09:38:33.937+00:00",
+      "expiresAt": "2026-10-12T09:38:33.937+00:00",
+      "usageLimit": 100,
+      "usedCount": 0,
+      "active": true,
+      "createdAt": "2026-10-11T09:38:33.937+00:00",
+      "updatedAt": "2026-10-11T09:38:33.937+00:00"
+    },
+    {
+      "id": "coup-1791711271388",
+      "code": "PRIVILEGE15-I7RJ",
+      "discountType": "percentage",
+      "discountValue": 15,
+      "minOrderValue": 500,
+      "maxDiscount": 1000,
+      "startDate": "2026-10-11T00:00:00+00:00",
+      "expiresAt": "2027-10-11T00:00:00+00:00",
+      "usageLimit": 100,
+      "usedCount": 0,
+      "active": true,
+      "createdAt": "2026-10-11T09:34:31.388+00:00",
+      "updatedAt": "2026-10-11T09:34:31.388+00:00"
+    },
+    {
+      "id": "coup-1791711249223",
+      "code": "ATELIER15-ERBO",
+      "discountType": "percentage",
+      "discountValue": 15,
+      "minOrderValue": 500,
+      "maxDiscount": 1000,
+      "startDate": "2026-10-11T00:00:00+00:00",
+      "expiresAt": "2027-10-11T00:00:00+00:00",
+      "usageLimit": 100,
+      "usedCount": 0,
+      "active": true,
+      "createdAt": "2026-10-11T09:34:09.223+00:00",
+      "updatedAt": "2026-10-11T09:34:09.223+00:00"
     }
   ],
   "reviews": [

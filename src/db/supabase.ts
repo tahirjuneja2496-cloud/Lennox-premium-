@@ -611,9 +611,31 @@ export function mapSupabaseToCoupon(row: any): Coupon {
 }
 
 export function mapCouponToSupabase(c: Coupon): Record<string, any> {
-  const coupId = (c.id && String(c.id).trim()) ? String(c.id).trim() : `coup-${Date.now()}`;
+  const coupId = (c.id && String(c.id).trim())
+    ? String(c.id).trim()
+    : `coup-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
   const code = (c.code || '').toUpperCase().trim();
   const now = new Date().toISOString();
+
+  let startDateVal: string = now;
+  if (c.startDate) {
+    try {
+      startDateVal = new Date(c.startDate).toISOString();
+    } catch {
+      startDateVal = now;
+    }
+  }
+
+  let expiresAtVal: string;
+  if (c.expiresAt) {
+    try {
+      expiresAtVal = new Date(c.expiresAt).toISOString();
+    } catch {
+      expiresAtVal = new Date(Date.now() + 365 * 86400000).toISOString();
+    }
+  } else {
+    expiresAtVal = new Date(Date.now() + 365 * 86400000).toISOString();
+  }
 
   return {
     id: coupId,
@@ -622,8 +644,8 @@ export function mapCouponToSupabase(c: Coupon): Record<string, any> {
     discount_value: Number(c.discountValue || 0),
     min_order_value: Number(c.minOrderValue || 0),
     max_discount: c.maxDiscount !== undefined && c.maxDiscount !== null ? Number(c.maxDiscount) : null,
-    start_date: c.startDate || now.slice(0, 10),
-    expires_at: c.expiresAt || new Date(Date.now() + 365 * 86400000).toISOString().slice(0, 10),
+    start_date: startDateVal,
+    expires_at: expiresAtVal,
     usage_limit: Number(c.usageLimit || 100),
     used_count: Number(c.usedCount || 0),
     active: c.active !== false,
@@ -655,6 +677,7 @@ export async function getCouponsFromSupabase(): Promise<SupabaseCouponsResult> {
 
     if (error) {
       const isMissing = isTableMissingError(error);
+      console.warn('[Atelier V] Supabase getCoupons notice:', error.message);
       return {
         coupons: [],
         connected: true,
@@ -674,6 +697,7 @@ export async function getCouponsFromSupabase(): Promise<SupabaseCouponsResult> {
       tableMissing: false
     };
   } catch (err: any) {
+    console.warn('[Atelier V] Supabase getCoupons exception:', err);
     return {
       coupons: [],
       connected: false,
@@ -690,20 +714,38 @@ export async function saveCouponToSupabase(
   coupon: Coupon
 ): Promise<{ success: boolean; data?: any; error?: string; tableMissing?: boolean }> {
   if (!client) {
+    console.error('[Atelier V] saveCouponToSupabase failed: Supabase client not initialized');
     return { success: false, error: 'Supabase client not initialized' };
   }
   try {
     const row = mapCouponToSupabase(coupon);
-    const { data, error } = await client.from('coupons').upsert(row).select();
+
+    // If coupon already exists in table by code, preserve the original id to maintain primary key consistency
+    const { data: existingRows } = await client
+      .from('coupons')
+      .select('id')
+      .eq('code', row.code)
+      .limit(1);
+
+    if (existingRows && existingRows.length > 0) {
+      row.id = existingRows[0].id;
+    }
+
+    const { data, error } = await client
+      .from('coupons')
+      .upsert(row, { onConflict: 'code' })
+      .select();
 
     if (error) {
       const isMissing = isTableMissingError(error);
-      console.warn('[Atelier V] Supabase saveCoupon notice:', error.message);
+      console.error('[Atelier V] Supabase saveCoupon error:', error.message, error);
       return { success: false, error: error.message, tableMissing: isMissing };
     }
+
+    console.log('[Atelier V] Supabase saveCoupon success:', row.code, data);
     return { success: true, data };
   } catch (err: any) {
-    console.warn('[Atelier V] Supabase saveCoupon error:', err?.message || err);
+    console.error('[Atelier V] Supabase saveCoupon exception:', err?.message || err);
     return { success: false, error: err?.message || 'Database error' };
   }
 }
@@ -712,21 +754,26 @@ export async function saveCouponToSupabase(
  * Delete a coupon from Supabase coupons table
  */
 export async function deleteCouponFromSupabase(
-  id: string
+  idOrCode: string
 ): Promise<{ success: boolean; error?: string; tableMissing?: boolean }> {
   if (!client) {
     return { success: false, error: 'Supabase client not initialized' };
   }
   try {
-    const { error } = await client.from('coupons').delete().eq('id', id);
+    const clean = String(idOrCode).trim();
+    const { error } = await client
+      .from('coupons')
+      .delete()
+      .or(`id.eq.${clean},code.eq.${clean.toUpperCase()}`);
+
     if (error) {
       const isMissing = isTableMissingError(error);
-      console.warn('[Atelier V] Supabase deleteCoupon notice:', error.message);
+      console.error('[Atelier V] Supabase deleteCoupon error:', error.message);
       return { success: false, error: error.message, tableMissing: isMissing };
     }
     return { success: true };
   } catch (err: any) {
-    console.warn('[Atelier V] Supabase deleteCoupon error:', err?.message || err);
+    console.error('[Atelier V] Supabase deleteCoupon exception:', err?.message || err);
     return { success: false, error: err?.message || 'Database error' };
   }
 }

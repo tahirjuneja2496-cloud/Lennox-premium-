@@ -839,33 +839,29 @@ app.get('/api/coupons/status', async (req: Request, res: Response) => {
 
 app.get('/api/coupons', async (req: Request, res: Response) => {
   try {
-    const db = await readDatabase();
-
-    // 1. Sync from Supabase if connected
+    // 1. Sync from Supabase first (Authoritative database)
     if (isSupabaseConnected()) {
       try {
         const spRes = await getCouponsFromSupabase();
-        if (spRes.connected && !spRes.tableMissing && Array.isArray(spRes.coupons)) {
-          if (spRes.coupons.length > 0) {
-            // Merge Supabase coupons into db.coupons
-            const mergedMap = new Map<string, Coupon>();
-            db.coupons.forEach(c => mergedMap.set(c.code.toUpperCase(), c));
-            spRes.coupons.forEach(c => mergedMap.set(c.code.toUpperCase(), c));
-            db.coupons = Array.from(mergedMap.values());
-            await writeDatabase(db);
-            return res.json(db.coupons);
-          } else if (spRes.coupons.length === 0 && db.coupons.length > 0) {
-            // Seed local coupons to Supabase
-            for (const c of db.coupons) {
-              await saveCouponToSupabase(c);
+        if (spRes.connected && !spRes.tableMissing && Array.isArray(spRes.coupons) && spRes.coupons.length > 0) {
+          const db = await readDatabase();
+          const mergedMap = new Map<string, Coupon>();
+          spRes.coupons.forEach(c => mergedMap.set(c.code.toUpperCase(), c));
+          db.coupons.forEach(c => {
+            if (!mergedMap.has(c.code.toUpperCase())) {
+              mergedMap.set(c.code.toUpperCase(), c);
             }
-          }
+          });
+          db.coupons = Array.from(mergedMap.values());
+          await writeDatabase(db);
+          return res.json(spRes.coupons);
         }
       } catch (e) {
         console.warn('Coupon Supabase sync warning:', e);
       }
     }
 
+    const db = await readDatabase();
     res.json(db.coupons);
   } catch (err) {
     res.status(500).json({ error: 'Failed to fetch coupons' });
@@ -874,21 +870,15 @@ app.get('/api/coupons', async (req: Request, res: Response) => {
 
 app.post('/api/coupons', async (req: Request, res: Response) => {
   try {
-    const db = await readDatabase();
     const rawCode = req.body.code ? String(req.body.code).trim().toUpperCase() : '';
     if (!rawCode) {
       return res.status(400).json({ error: 'Coupon code is required' });
     }
 
-    // Check for duplicate code
-    const existing = db.coupons.find(c => c.code.toUpperCase() === rawCode);
-    if (existing) {
-      return res.status(400).json({ error: `Coupon code '${rawCode}' already exists` });
-    }
-
     const now = new Date().toISOString();
+    const coupId = req.body.id || `coup-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
     const newCoupon: Coupon = {
-      id: req.body.id || `coup-${Date.now()}`,
+      id: coupId,
       code: rawCode,
       discountType: req.body.discountType === 'fixed' ? 'fixed' : 'percentage',
       discountValue: Math.max(0, Number(req.body.discountValue ?? 10)),
@@ -905,18 +895,24 @@ app.post('/api/coupons', async (req: Request, res: Response) => {
 
     // 1. Persist to Supabase if connected
     if (isSupabaseConnected()) {
-      try {
-        const spResult = await saveCouponToSupabase(newCoupon);
-        if (spResult.error && !spResult.tableMissing) {
-          console.warn('[Atelier V] Supabase coupon save notice:', spResult.error);
+      const spResult = await saveCouponToSupabase(newCoupon);
+      if (!spResult.success && !spResult.tableMissing) {
+        const errMsg = spResult.error || 'Failed to save coupon in Supabase';
+        if (errMsg.includes('duplicate key') || errMsg.includes('already exists')) {
+          return res.status(400).json({ error: `Coupon code '${rawCode}' already exists` });
         }
-      } catch (err: any) {
-        console.warn('[Atelier V] Supabase coupon save exception:', err);
+        return res.status(400).json({ error: errMsg });
       }
     }
 
-    // 2. Persist to database file
-    db.coupons.unshift(newCoupon);
+    // 2. Persist to local database file
+    const db = await readDatabase();
+    const existingIdx = db.coupons.findIndex(c => c.code.toUpperCase() === rawCode);
+    if (existingIdx >= 0) {
+      db.coupons[existingIdx] = newCoupon;
+    } else {
+      db.coupons.unshift(newCoupon);
+    }
     await writeDatabase(db);
 
     res.status(201).json(newCoupon);
@@ -940,17 +936,16 @@ app.put('/api/coupons/:id', async (req: Request, res: Response) => {
       updatedAt: new Date().toISOString()
     };
 
-    db.coupons[index] = updatedCoupon;
-    await writeDatabase(db);
-
     // Persist to Supabase
     if (isSupabaseConnected()) {
-      try {
-        await saveCouponToSupabase(updatedCoupon);
-      } catch (err) {
-        console.warn('Supabase update coupon notice:', err);
+      const spResult = await saveCouponToSupabase(updatedCoupon);
+      if (!spResult.success && !spResult.tableMissing) {
+        return res.status(400).json({ error: spResult.error || 'Failed to update coupon in Supabase' });
       }
     }
+
+    db.coupons[index] = updatedCoupon;
+    await writeDatabase(db);
 
     res.json(updatedCoupon);
   } catch (err: any) {
@@ -963,19 +958,16 @@ app.delete('/api/coupons/:id', async (req: Request, res: Response) => {
     const db = await readDatabase();
     const { id } = req.params;
     const index = db.coupons.findIndex(c => c.id === id || c.code.toUpperCase() === id.toUpperCase());
-    if (index === -1) return res.status(404).json({ error: 'Coupon not found' });
+    const deletedCode = index >= 0 ? db.coupons[index].code : id;
 
-    const deletedCode = db.coupons[index].code;
-    db.coupons.splice(index, 1);
-    await writeDatabase(db);
+    if (index >= 0) {
+      db.coupons.splice(index, 1);
+      await writeDatabase(db);
+    }
 
     // Delete from Supabase
     if (isSupabaseConnected()) {
-      try {
-        await deleteCouponFromSupabase(id);
-      } catch (err) {
-        console.warn('Supabase delete coupon notice:', err);
-      }
+      await deleteCouponFromSupabase(id);
     }
 
     res.json({ success: true, code: deletedCode });

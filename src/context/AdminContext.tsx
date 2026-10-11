@@ -268,16 +268,34 @@ export const AdminProvider: React.FC<{ children: ReactNode }> = ({ children }) =
       let saved: Coupon;
       if (isEdit && coupon.id) {
         saved = await api.updateCoupon(coupon.id, coupon);
-        addToast(`Coupon ${saved.code} updated`);
+        addToast(`Coupon ${saved.code} updated`, 'success');
       } else {
         saved = await api.createCoupon(coupon);
-        addToast(`Coupon ${saved.code} created`);
+        addToast(`Coupon ${saved.code} created`, 'success');
       }
-      setCoupons((prev) =>
-        isEdit
-          ? prev.map((c) => (c.id === saved.id || c.code.toUpperCase() === saved.code.toUpperCase() ? saved : c))
-          : [saved, ...prev.filter((c) => c.code.toUpperCase() !== saved.code.toUpperCase())]
-      );
+
+      // Requirement 7: After a successful insert/upsert, fetch coupons from Supabase again
+      // and display the saved database records. Preserve existing records when a fetch fails.
+      try {
+        const freshCoupons = await api.getCoupons();
+        if (Array.isArray(freshCoupons) && freshCoupons.length > 0) {
+          setCoupons(freshCoupons);
+        } else {
+          setCoupons((prev) =>
+            isEdit
+              ? prev.map((c) => (c.id === saved.id || c.code.toUpperCase() === saved.code.toUpperCase() ? saved : c))
+              : [saved, ...prev.filter((c) => c.code.toUpperCase() !== saved.code.toUpperCase())]
+          );
+        }
+      } catch (fetchErr) {
+        console.warn('[Atelier V] Post-save coupon refresh notice, preserving existing records:', fetchErr);
+        setCoupons((prev) =>
+          isEdit
+            ? prev.map((c) => (c.id === saved.id || c.code.toUpperCase() === saved.code.toUpperCase() ? saved : c))
+            : [saved, ...prev.filter((c) => c.code.toUpperCase() !== saved.code.toUpperCase())]
+        );
+      }
+
       return saved;
     } catch (err: any) {
       addToast(err.message || 'Failed to save coupon', 'error');
@@ -288,8 +306,14 @@ export const AdminProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   const deleteCoupon = async (id: string): Promise<void> => {
     try {
       await api.deleteCoupon(id);
-      setCoupons((prev) => prev.filter((c) => c.id !== id));
       addToast('Coupon deleted', 'info');
+
+      try {
+        const freshCoupons = await api.getCoupons();
+        setCoupons(freshCoupons);
+      } catch {
+        setCoupons((prev) => prev.filter((c) => c.id !== id));
+      }
     } catch (err: any) {
       addToast(err.message || 'Failed to delete coupon', 'error');
       throw err;
