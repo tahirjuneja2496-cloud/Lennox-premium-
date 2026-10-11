@@ -1,3 +1,4 @@
+import 'dotenv/config';
 import express from 'express';
 import type { Request, Response } from 'express';
 import path from 'path';
@@ -17,6 +18,9 @@ import {
 import type { Product, Category, Order, CustomerProfile, Coupon, Review, StoreSettings } from './src/types/index.ts';
 import {
   isSupabaseConnected,
+  getSupabaseClient,
+  mapSupabaseToCoupon,
+  mapCouponToSupabase,
   saveOrderToSupabase,
   getOrdersFromSupabase,
   updateOrderInSupabase,
@@ -644,16 +648,22 @@ app.post('/api/orders', async (req: Request, res: Response) => {
     if (pricing?.couponCode && String(pricing.couponCode).trim()) {
       const inputCode = String(pricing.couponCode).trim().toUpperCase();
 
-      // Look up coupon from Supabase or db.coupons
+      // Look up coupon directly from Supabase public.coupons table
       let coupon: Coupon | undefined = undefined;
-      if (isSupabaseConnected()) {
+      const client = getSupabaseClient();
+      if (client) {
         try {
-          const spRes = await getCouponsFromSupabase();
-          if (spRes.coupons && spRes.coupons.length > 0) {
-            coupon = spRes.coupons.find(c => c.code.toUpperCase() === inputCode);
+          const { data: spCoupon, error: spErr } = await client
+            .from('coupons')
+            .select('*')
+            .eq('code', inputCode)
+            .maybeSingle();
+
+          if (spCoupon && !spErr) {
+            coupon = mapSupabaseToCoupon(spCoupon);
           }
-        } catch {
-          // Fall back to local db
+        } catch (e) {
+          console.warn('[Order] Supabase coupon lookup notice:', e);
         }
       }
       if (!coupon) {
@@ -693,14 +703,27 @@ app.post('/api/orders', async (req: Request, res: Response) => {
       verifiedDiscount = Math.round(verifiedDiscount * 100) / 100;
       verifiedCouponCode = coupon.code;
 
-      // Increment coupon usage in memory/db and in Supabase
+      // Increment coupon usage directly in Supabase public.coupons
       coupon.usedCount = (coupon.usedCount || 0) + 1;
+      if (client) {
+        try {
+          const { error: incErr } = await client
+            .from('coupons')
+            .update({
+              used_count: coupon.usedCount,
+              updated_at: new Date().toISOString()
+            })
+            .eq('code', coupon.code);
+          if (incErr) {
+            console.warn('[Order] Notice updating coupon used_count in Supabase:', incErr.message);
+          }
+        } catch (e) {
+          console.warn('[Order] Exception updating coupon used_count in Supabase:', e);
+        }
+      }
       const dbCouponIdx = db.coupons.findIndex(c => c.code.toUpperCase() === inputCode);
       if (dbCouponIdx !== -1) {
         db.coupons[dbCouponIdx].usedCount = coupon.usedCount;
-      }
-      if (isSupabaseConnected()) {
-        incrementCouponUsageInSupabase(coupon.code).catch(() => {});
       }
     }
 
@@ -817,11 +840,13 @@ app.get('/api/customers', requireAdmin, async (req: Request, res: Response) => {
 // -------------------------------------------------------------
 app.get('/api/coupons/status', async (req: Request, res: Response) => {
   try {
-    if (!isSupabaseConnected()) {
+    const client = getSupabaseClient();
+    if (!client) {
       return res.json({
         supabaseConnected: false,
         tableMissing: true,
-        migrationSql: COUPON_MIGRATION_SQL
+        migrationSql: COUPON_MIGRATION_SQL,
+        error: 'Supabase client not initialized. Server requires SUPABASE_URL and SUPABASE_ANON_KEY (or SUPABASE_SERVICE_ROLE_KEY).'
       });
     }
     const spRes = await getCouponsFromSupabase();
@@ -837,166 +862,342 @@ app.get('/api/coupons/status', async (req: Request, res: Response) => {
   }
 });
 
+// GET: Read coupons directly from Supabase public.coupons table
 app.get('/api/coupons', async (req: Request, res: Response) => {
   try {
-    // 1. Sync from Supabase first (Authoritative database)
-    if (isSupabaseConnected()) {
-      try {
-        const spRes = await getCouponsFromSupabase();
-        if (spRes.connected && !spRes.tableMissing && Array.isArray(spRes.coupons) && spRes.coupons.length > 0) {
-          const db = await readDatabase();
-          const mergedMap = new Map<string, Coupon>();
-          spRes.coupons.forEach(c => mergedMap.set(c.code.toUpperCase(), c));
-          db.coupons.forEach(c => {
-            if (!mergedMap.has(c.code.toUpperCase())) {
-              mergedMap.set(c.code.toUpperCase(), c);
-            }
-          });
-          db.coupons = Array.from(mergedMap.values());
-          await writeDatabase(db);
-          return res.json(spRes.coupons);
-        }
-      } catch (e) {
-        console.warn('Coupon Supabase sync warning:', e);
-      }
+    const client = getSupabaseClient();
+    if (!client) {
+      console.error('[API GET /api/coupons] Missing Supabase configuration: SUPABASE_URL and SUPABASE_ANON_KEY must be set.');
+      return res.status(500).json({
+        error: 'Supabase is not configured on the server. Please configure SUPABASE_URL and SUPABASE_ANON_KEY (or SUPABASE_SERVICE_ROLE_KEY) environment variables. Memory storage fallback is disabled.'
+      });
     }
 
-    const db = await readDatabase();
-    res.json(db.coupons);
-  } catch (err) {
-    res.status(500).json({ error: 'Failed to fetch coupons' });
+    const { data, error } = await client
+      .from('coupons')
+      .select('*')
+      .order('created_at', { ascending: false });
+
+    if (error) {
+      console.error('[API GET /api/coupons] Supabase SELECT error:', error);
+      return res.status(500).json({ error: error.message || 'Failed to fetch coupons from database' });
+    }
+
+    const coupons: Coupon[] = (data || []).map(mapSupabaseToCoupon);
+
+    // Keep secondary store state in sync
+    try {
+      const db = await readDatabase();
+      db.coupons = coupons;
+      await writeDatabase(db);
+    } catch {}
+
+    return res.json(coupons);
+  } catch (err: any) {
+    console.error('[API GET /api/coupons] Exception:', err);
+    res.status(500).json({ error: err?.message || 'Failed to fetch coupons' });
   }
 });
 
-app.post('/api/coupons', async (req: Request, res: Response) => {
+// CREATE: Insert coupon directly into Supabase public.coupons table
+app.post('/api/coupons', requireAdmin, async (req: Request, res: Response) => {
   try {
+    const client = getSupabaseClient();
+    if (!client) {
+      console.error('[API POST /api/coupons] Missing Supabase configuration: SUPABASE_URL and SUPABASE_ANON_KEY must be set.');
+      return res.status(500).json({
+        error: 'Supabase is not configured on the server. Please configure SUPABASE_URL and SUPABASE_ANON_KEY (or SUPABASE_SERVICE_ROLE_KEY) environment variables. Temporary memory storage is disabled for coupon writes.'
+      });
+    }
+
     const rawCode = req.body.code ? String(req.body.code).trim().toUpperCase() : '';
     if (!rawCode) {
       return res.status(400).json({ error: 'Coupon code is required' });
     }
 
-    const now = new Date().toISOString();
-    const coupId = req.body.id || `coup-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
-    const newCoupon: Coupon = {
-      id: coupId,
-      code: rawCode,
-      discountType: req.body.discountType === 'fixed' ? 'fixed' : 'percentage',
-      discountValue: Math.max(0, Number(req.body.discountValue ?? 10)),
-      minOrderValue: Math.max(0, Number(req.body.minOrderValue ?? 0)),
-      maxDiscount: req.body.maxDiscount !== undefined && req.body.maxDiscount !== null ? Number(req.body.maxDiscount) : undefined,
-      startDate: req.body.startDate || now.slice(0, 10),
-      expiresAt: req.body.expiresAt || new Date(Date.now() + 365 * 86400000).toISOString().slice(0, 10),
-      usageLimit: Math.max(1, Number(req.body.usageLimit ?? 100)),
-      usedCount: 0,
-      active: req.body.active !== false,
-      createdAt: now,
-      updatedAt: now
-    };
+    // Check for duplicate code in public.coupons
+    const { data: existing, error: checkErr } = await client
+      .from('coupons')
+      .select('id, code')
+      .eq('code', rawCode)
+      .maybeSingle();
 
-    // 1. Persist to Supabase if connected
-    if (isSupabaseConnected()) {
-      const spResult = await saveCouponToSupabase(newCoupon);
-      if (!spResult.success && !spResult.tableMissing) {
-        const errMsg = spResult.error || 'Failed to save coupon in Supabase';
-        if (errMsg.includes('duplicate key') || errMsg.includes('already exists')) {
-          return res.status(400).json({ error: `Coupon code '${rawCode}' already exists` });
-        }
-        return res.status(400).json({ error: errMsg });
+    if (checkErr) {
+      console.error('[API POST /api/coupons] Duplicate check error in Supabase:', checkErr);
+      return res.status(500).json({ error: checkErr.message || 'Database error checking coupon code' });
+    }
+
+    if (existing) {
+      return res.status(400).json({ error: `Coupon code '${rawCode}' already exists` });
+    }
+
+    // Generate unique text ID
+    const coupId = req.body.id && String(req.body.id).trim()
+      ? String(req.body.id).trim()
+      : `coup-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
+
+    const now = new Date().toISOString();
+    let startDateVal = now;
+    if (req.body.startDate) {
+      try {
+        startDateVal = new Date(req.body.startDate).toISOString();
+      } catch {
+        startDateVal = now;
       }
     }
 
-    // 2. Persist to local database file
-    const db = await readDatabase();
-    const existingIdx = db.coupons.findIndex(c => c.code.toUpperCase() === rawCode);
-    if (existingIdx >= 0) {
-      db.coupons[existingIdx] = newCoupon;
+    let expiresAtVal: string;
+    if (req.body.expiresAt) {
+      try {
+        expiresAtVal = new Date(req.body.expiresAt).toISOString();
+      } catch {
+        expiresAtVal = new Date(Date.now() + 365 * 86400000).toISOString();
+      }
     } else {
-      db.coupons.unshift(newCoupon);
+      expiresAtVal = new Date(Date.now() + 365 * 86400000).toISOString();
     }
-    await writeDatabase(db);
 
-    res.status(201).json(newCoupon);
+    const rowToInsert = {
+      id: coupId,
+      code: rawCode,
+      discount_type: req.body.discountType === 'fixed' ? 'fixed' : 'percentage',
+      discount_value: Math.max(0, Number(req.body.discountValue ?? 10)),
+      min_order_value: Math.max(0, Number(req.body.minOrderValue ?? 0)),
+      max_discount: req.body.maxDiscount !== undefined && req.body.maxDiscount !== null ? Number(req.body.maxDiscount) : null,
+      start_date: startDateVal,
+      expires_at: expiresAtVal,
+      usage_limit: Math.max(1, Number(req.body.usageLimit ?? 100)),
+      used_count: 0,
+      active: req.body.active !== false,
+      data: {
+        id: coupId,
+        code: rawCode,
+        discountType: req.body.discountType === 'fixed' ? 'fixed' : 'percentage',
+        discountValue: Math.max(0, Number(req.body.discountValue ?? 10)),
+        minOrderValue: Math.max(0, Number(req.body.minOrderValue ?? 0)),
+        maxDiscount: req.body.maxDiscount !== undefined && req.body.maxDiscount !== null ? Number(req.body.maxDiscount) : undefined,
+        startDate: req.body.startDate || now.slice(0, 10),
+        expiresAt: req.body.expiresAt || expiresAtVal.slice(0, 10),
+        usageLimit: Math.max(1, Number(req.body.usageLimit ?? 100)),
+        usedCount: 0,
+        active: req.body.active !== false,
+        createdAt: now,
+        updatedAt: now
+      },
+      created_at: now,
+      updated_at: now
+    };
+
+    console.log('[API POST /api/coupons] Inserting into Supabase public.coupons:', rowToInsert.code, rowToInsert.id);
+    const { data: inserted, error: insertError } = await client
+      .from('coupons')
+      .insert(rowToInsert)
+      .select()
+      .single();
+
+    if (insertError) {
+      console.error('[API POST /api/coupons] Supabase INSERT error:', insertError);
+      if (insertError.code === '23505' || insertError.message.includes('unique') || insertError.message.includes('duplicate')) {
+        return res.status(400).json({ error: `Coupon code '${rawCode}' already exists` });
+      }
+      return res.status(400).json({ error: insertError.message || 'Failed to save coupon in Supabase' });
+    }
+
+    const createdCoupon = mapSupabaseToCoupon(inserted);
+
+    // Keep secondary local database in sync
+    try {
+      const db = await readDatabase();
+      const existingIdx = db.coupons.findIndex(c => c.code.toUpperCase() === rawCode || c.id === coupId);
+      if (existingIdx >= 0) {
+        db.coupons[existingIdx] = createdCoupon;
+      } else {
+        db.coupons.unshift(createdCoupon);
+      }
+      await writeDatabase(db);
+    } catch {}
+
+    console.log('[API POST /api/coupons] Confirmed creation in public.coupons:', createdCoupon.code);
+    return res.status(201).json(createdCoupon);
   } catch (err: any) {
-    console.error('Coupon creation error:', err);
+    console.error('[API POST /api/coupons] Error:', err);
     res.status(500).json({ error: err?.message || 'Failed to create coupon' });
   }
 });
 
-app.put('/api/coupons/:id', async (req: Request, res: Response) => {
+// UPDATE: Update coupon directly in Supabase public.coupons table
+app.put('/api/coupons/:id', requireAdmin, async (req: Request, res: Response) => {
   try {
-    const db = await readDatabase();
+    const client = getSupabaseClient();
+    if (!client) {
+      return res.status(500).json({
+        error: 'Supabase is not configured on the server. Please configure SUPABASE_URL and SUPABASE_ANON_KEY (or SUPABASE_SERVICE_ROLE_KEY) environment variables.'
+      });
+    }
+
     const { id } = req.params;
-    const index = db.coupons.findIndex(c => c.id === id || c.code.toUpperCase() === id.toUpperCase());
-    if (index === -1) return res.status(404).json({ error: 'Coupon not found' });
+    const cleanId = String(id).trim();
 
-    const updatedCoupon: Coupon = {
-      ...db.coupons[index],
-      ...req.body,
-      code: req.body.code ? String(req.body.code).trim().toUpperCase() : db.coupons[index].code,
-      updatedAt: new Date().toISOString()
-    };
+    // Check if coupon exists in Supabase
+    const { data: existing, error: findError } = await client
+      .from('coupons')
+      .select('*')
+      .or(`id.eq.${cleanId},code.eq.${cleanId.toUpperCase()}`)
+      .maybeSingle();
 
-    // Persist to Supabase
-    if (isSupabaseConnected()) {
-      const spResult = await saveCouponToSupabase(updatedCoupon);
-      if (!spResult.success && !spResult.tableMissing) {
-        return res.status(400).json({ error: spResult.error || 'Failed to update coupon in Supabase' });
+    if (findError) {
+      console.error('[API PUT /api/coupons/:id] Supabase lookup error:', findError);
+      return res.status(500).json({ error: findError.message || 'Database lookup error' });
+    }
+
+    if (!existing) {
+      return res.status(404).json({ error: 'Coupon not found' });
+    }
+
+    const targetId = existing.id;
+    const newCode = req.body.code ? String(req.body.code).trim().toUpperCase() : existing.code;
+
+    // Check if new code conflicts with another coupon
+    if (newCode !== existing.code) {
+      const { data: conflict } = await client
+        .from('coupons')
+        .select('id')
+        .eq('code', newCode)
+        .neq('id', targetId)
+        .maybeSingle();
+
+      if (conflict) {
+        return res.status(400).json({ error: `Coupon code '${newCode}' is already in use by another coupon` });
       }
     }
 
-    db.coupons[index] = updatedCoupon;
-    await writeDatabase(db);
+    const now = new Date().toISOString();
+    const updateData: Record<string, any> = {
+      updated_at: now
+    };
 
-    res.json(updatedCoupon);
+    if (req.body.code !== undefined) updateData.code = newCode;
+    if (req.body.discountType !== undefined) updateData.discount_type = req.body.discountType === 'fixed' ? 'fixed' : 'percentage';
+    if (req.body.discountValue !== undefined) updateData.discount_value = Math.max(0, Number(req.body.discountValue));
+    if (req.body.minOrderValue !== undefined) updateData.min_order_value = Math.max(0, Number(req.body.minOrderValue));
+    if (req.body.maxDiscount !== undefined) updateData.max_discount = req.body.maxDiscount !== null ? Number(req.body.maxDiscount) : null;
+    if (req.body.startDate !== undefined) {
+      try {
+        updateData.start_date = new Date(req.body.startDate).toISOString();
+      } catch {}
+    }
+    if (req.body.expiresAt !== undefined) {
+      try {
+        updateData.expires_at = new Date(req.body.expiresAt).toISOString();
+      } catch {}
+    }
+    if (req.body.usageLimit !== undefined) updateData.usage_limit = Math.max(1, Number(req.body.usageLimit));
+    if (req.body.usedCount !== undefined) updateData.used_count = Math.max(0, Number(req.body.usedCount));
+    if (req.body.active !== undefined) updateData.active = Boolean(req.body.active);
+
+    const mergedData = {
+      ...(existing.data || {}),
+      ...req.body,
+      id: targetId,
+      code: newCode,
+      updatedAt: now
+    };
+    updateData.data = mergedData;
+
+    console.log('[API PUT /api/coupons/:id] Updating coupon in Supabase:', targetId, newCode);
+    const { data: updated, error: updateError } = await client
+      .from('coupons')
+      .update(updateData)
+      .eq('id', targetId)
+      .select()
+      .single();
+
+    if (updateError) {
+      console.error('[API PUT /api/coupons/:id] Supabase UPDATE error:', updateError);
+      return res.status(400).json({ error: updateError.message || 'Failed to update coupon in Supabase' });
+    }
+
+    const updatedCoupon = mapSupabaseToCoupon(updated);
+
+    // Keep secondary local database in sync
+    try {
+      const db = await readDatabase();
+      const idx = db.coupons.findIndex(c => c.id === targetId || c.code.toUpperCase() === existing.code);
+      if (idx >= 0) db.coupons[idx] = updatedCoupon;
+      await writeDatabase(db);
+    } catch {}
+
+    return res.json(updatedCoupon);
   } catch (err: any) {
+    console.error('[API PUT /api/coupons/:id] Error:', err);
     res.status(500).json({ error: err?.message || 'Failed to update coupon' });
   }
 });
 
-app.delete('/api/coupons/:id', async (req: Request, res: Response) => {
+// DELETE: Remove coupon directly from Supabase public.coupons table
+app.delete('/api/coupons/:id', requireAdmin, async (req: Request, res: Response) => {
   try {
-    const db = await readDatabase();
+    const client = getSupabaseClient();
+    if (!client) {
+      return res.status(500).json({
+        error: 'Supabase is not configured on the server. Please configure SUPABASE_URL and SUPABASE_ANON_KEY (or SUPABASE_SERVICE_ROLE_KEY) environment variables.'
+      });
+    }
+
     const { id } = req.params;
-    const index = db.coupons.findIndex(c => c.id === id || c.code.toUpperCase() === id.toUpperCase());
-    const deletedCode = index >= 0 ? db.coupons[index].code : id;
+    const cleanId = String(id).trim();
 
-    if (index >= 0) {
-      db.coupons.splice(index, 1);
+    console.log('[API DELETE /api/coupons/:id] Deleting from Supabase:', cleanId);
+    const { data: deleted, error: deleteError } = await client
+      .from('coupons')
+      .delete()
+      .or(`id.eq.${cleanId},code.eq.${cleanId.toUpperCase()}`)
+      .select();
+
+    if (deleteError) {
+      console.error('[API DELETE /api/coupons/:id] Supabase DELETE error:', deleteError);
+      return res.status(400).json({ error: deleteError.message || 'Failed to delete coupon from Supabase' });
+    }
+
+    // Keep secondary local database in sync
+    try {
+      const db = await readDatabase();
+      db.coupons = db.coupons.filter(c => c.id !== cleanId && c.code.toUpperCase() !== cleanId.toUpperCase());
       await writeDatabase(db);
-    }
+    } catch {}
 
-    // Delete from Supabase
-    if (isSupabaseConnected()) {
-      await deleteCouponFromSupabase(id);
-    }
-
-    res.json({ success: true, code: deletedCode });
+    return res.json({ success: true, count: deleted?.length || 0, id: cleanId });
   } catch (err: any) {
+    console.error('[API DELETE /api/coupons/:id] Error:', err);
     res.status(500).json({ error: err?.message || 'Failed to delete coupon' });
   }
 });
 
+// VALIDATE: Validate coupon directly from Supabase public.coupons table
 app.post('/api/coupons/validate', async (req: Request, res: Response) => {
   try {
-    const db = await readDatabase();
     const rawCode = req.body.code ? String(req.body.code).trim().toUpperCase() : '';
-    const subtotal = Number(req.body.subtotal ?? req.body.cartTotal ?? 0);
+    // Fix request field mismatch: support both cartTotal and subtotal
+    const subtotal = Number(req.body.cartTotal ?? req.body.subtotal ?? 0);
 
     if (!rawCode) return res.status(400).json({ error: 'Coupon code required' });
 
-    // Look up coupon (Supabase first, then local db)
     let coupon: Coupon | undefined = undefined;
-    if (isSupabaseConnected()) {
-      try {
-        const spRes = await getCouponsFromSupabase();
-        if (spRes.coupons && spRes.coupons.length > 0) {
-          coupon = spRes.coupons.find(c => c.code.toUpperCase() === rawCode);
-        }
-      } catch {
-        // Fall back to db
+    const client = getSupabaseClient();
+    if (client) {
+      const { data, error } = await client
+        .from('coupons')
+        .select('*')
+        .eq('code', rawCode)
+        .maybeSingle();
+
+      if (data && !error) {
+        coupon = mapSupabaseToCoupon(data);
       }
     }
+
     if (!coupon) {
+      const db = await readDatabase();
       coupon = db.coupons.find(c => c.code.toUpperCase() === rawCode);
     }
 

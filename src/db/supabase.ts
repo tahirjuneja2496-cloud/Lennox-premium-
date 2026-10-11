@@ -570,43 +570,36 @@ CREATE POLICY "Allow anon delete coupons" ON public.coupons FOR DELETE USING (tr
 `;
 
 export function mapSupabaseToCoupon(row: any): Coupon {
-  if (row.data && typeof row.data === 'object' && row.data.code) {
-    const d = row.data;
-    return {
-      id: String(row.id || d.id),
-      code: String(row.code || d.code || '').toUpperCase().trim(),
-      discountType: (row.discount_type || d.discountType || 'percentage') as 'percentage' | 'fixed',
-      discountValue: Number(row.discount_value ?? d.discountValue ?? 0),
-      minOrderValue: Number(row.min_order_value ?? d.minOrderValue ?? 0),
-      maxDiscount: row.max_discount !== undefined && row.max_discount !== null 
-        ? Number(row.max_discount) 
-        : (d.maxDiscount !== undefined && d.maxDiscount !== null ? Number(d.maxDiscount) : undefined),
-      startDate: row.start_date || d.startDate || undefined,
-      expiresAt: row.expires_at || d.expiresAt || new Date(Date.now() + 365 * 86400000).toISOString().slice(0, 10),
-      usageLimit: Number(row.usage_limit ?? d.usageLimit ?? 100),
-      usedCount: Number(row.used_count ?? d.usedCount ?? 0),
-      active: row.active !== undefined ? Boolean(row.active) : Boolean(d.active !== false),
-      createdAt: row.created_at || d.createdAt || new Date().toISOString(),
-      updatedAt: row.updated_at || d.updatedAt || new Date().toISOString()
-    };
-  }
+  const d = (row.data && typeof row.data === 'object') ? row.data : {};
+
+  const rawExpires = row.expires_at || row.expiresAt || d.expiresAt || '';
+  const expiresAt = rawExpires
+    ? String(rawExpires).slice(0, 10)
+    : new Date(Date.now() + 365 * 86400000).toISOString().slice(0, 10);
+
+  const rawStart = row.start_date || row.startDate || d.startDate || '';
+  const startDate = rawStart ? String(rawStart).slice(0, 10) : undefined;
+
+  const rawMaxDisc = row.max_discount !== undefined && row.max_discount !== null
+    ? row.max_discount
+    : (row.maxDiscount !== undefined && row.maxDiscount !== null
+      ? row.maxDiscount
+      : d.maxDiscount);
 
   return {
-    id: String(row.id),
-    code: String(row.code || '').toUpperCase().trim(),
-    discountType: (row.discount_type || row.discountType || 'percentage') as 'percentage' | 'fixed',
-    discountValue: Number(row.discount_value ?? row.discountValue ?? 0),
-    minOrderValue: Number(row.min_order_value ?? row.minOrderValue ?? 0),
-    maxDiscount: row.max_discount !== undefined && row.max_discount !== null 
-      ? Number(row.max_discount) 
-      : (row.maxDiscount !== undefined && row.maxDiscount !== null ? Number(row.maxDiscount) : undefined),
-    startDate: row.start_date || row.startDate || undefined,
-    expiresAt: row.expires_at || row.expiresAt || new Date(Date.now() + 365 * 86400000).toISOString().slice(0, 10),
-    usageLimit: Number(row.usage_limit ?? row.usageLimit ?? 100),
-    usedCount: Number(row.used_count ?? row.usedCount ?? 0),
-    active: row.active !== undefined ? Boolean(row.active) : true,
-    createdAt: row.created_at || new Date().toISOString(),
-    updatedAt: row.updated_at || new Date().toISOString()
+    id: String(row.id || d.id || ''),
+    code: String(row.code || d.code || '').toUpperCase().trim(),
+    discountType: ((row.discount_type || row.discountType || d.discountType || 'percentage') === 'fixed') ? 'fixed' : 'percentage',
+    discountValue: Number(row.discount_value ?? row.discountValue ?? d.discountValue ?? 0),
+    minOrderValue: Number(row.min_order_value ?? row.minOrderValue ?? d.minOrderValue ?? 0),
+    maxDiscount: rawMaxDisc !== undefined && rawMaxDisc !== null ? Number(rawMaxDisc) : undefined,
+    startDate,
+    expiresAt,
+    usageLimit: Number(row.usage_limit ?? row.usageLimit ?? d.usageLimit ?? 100),
+    usedCount: Number(row.used_count ?? row.usedCount ?? d.usedCount ?? 0),
+    active: row.active !== undefined ? Boolean(row.active) : Boolean(d.active !== false),
+    createdAt: row.created_at || row.createdAt || d.createdAt || new Date().toISOString(),
+    updatedAt: row.updated_at || row.updatedAt || d.updatedAt || new Date().toISOString()
   };
 }
 

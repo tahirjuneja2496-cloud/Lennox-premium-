@@ -460,33 +460,14 @@ export const api = {
 
   // Coupons
   async getCoupons(): Promise<Coupon[]> {
-    // 1. Direct Supabase read (Authoritative source of truth across all devices)
-    if (isSupabaseConnected()) {
-      try {
-        const spRes = await getCouponsFromSupabase();
-        if (spRes.connected && !spRes.tableMissing && Array.isArray(spRes.coupons)) {
-          if (spRes.coupons.length > 0) {
-            if (typeof window !== 'undefined') {
-              try {
-                localStorage.setItem('atelierv_coupons_cache', JSON.stringify(spRes.coupons));
-              } catch {}
-            }
-            return spRes.coupons;
-          }
-        }
-      } catch (e) {
-        console.warn('[Atelier V] Direct Supabase coupon fetch notice:', e);
-      }
-    }
-
-    // 2. Try server endpoint
+    // 1. Fetch from server endpoint which queries public.coupons table in Supabase
     try {
       const res = await apiFetch('/api/coupons', {
         headers: getAuthHeaders()
       });
       if (res.ok) {
         const data = await res.json();
-        if (Array.isArray(data) && data.length > 0) {
+        if (Array.isArray(data)) {
           if (typeof window !== 'undefined') {
             try {
               localStorage.setItem('atelierv_coupons_cache', JSON.stringify(data));
@@ -497,6 +478,23 @@ export const api = {
       }
     } catch (err) {
       console.warn('API getCoupons notice:', err);
+    }
+
+    // 2. Direct Supabase read fallback if server endpoint had an issue
+    if (isSupabaseConnected()) {
+      try {
+        const spRes = await getCouponsFromSupabase();
+        if (spRes.connected && !spRes.tableMissing && Array.isArray(spRes.coupons)) {
+          if (typeof window !== 'undefined') {
+            try {
+              localStorage.setItem('atelierv_coupons_cache', JSON.stringify(spRes.coupons));
+            } catch {}
+          }
+          return spRes.coupons;
+        }
+      } catch (e) {
+        console.warn('[Atelier V] Direct Supabase coupon fetch notice:', e);
+      }
     }
 
     // 3. Check client localStorage cache
@@ -514,6 +512,11 @@ export const api = {
   },
 
   async getCouponDatabaseStatus(): Promise<{ supabaseConnected: boolean; tableMissing: boolean; count: number; error?: string; migrationSql: string }> {
+    try {
+      const res = await apiFetch('/api/coupons/status');
+      if (res.ok) return await res.json();
+    } catch {}
+
     if (isSupabaseConnected()) {
       try {
         const sp = await getCouponsFromSupabase();
@@ -526,11 +529,6 @@ export const api = {
         };
       } catch {}
     }
-
-    try {
-      const res = await apiFetch('/api/coupons/status');
-      if (res.ok) return await res.json();
-    } catch {}
 
     return {
       supabaseConnected: false,
@@ -546,7 +544,6 @@ export const api = {
       throw new Error('Coupon code is required');
     }
 
-    const now = new Date().toISOString();
     const coupId = (coupon.id && String(coupon.id).trim())
       ? String(coupon.id).trim()
       : `coup-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
@@ -558,87 +555,69 @@ export const api = {
       discountValue: Math.max(0, Number(coupon.discountValue ?? 10)),
       minOrderValue: Math.max(0, Number(coupon.minOrderValue ?? 0)),
       maxDiscount: coupon.maxDiscount !== undefined && coupon.maxDiscount !== null ? Number(coupon.maxDiscount) : undefined,
-      startDate: coupon.startDate || now.slice(0, 10),
+      startDate: coupon.startDate || new Date().toISOString().slice(0, 10),
       expiresAt: coupon.expiresAt || new Date(Date.now() + 365 * 86400000).toISOString().slice(0, 10),
       usageLimit: Math.max(1, Number(coupon.usageLimit ?? 100)),
       usedCount: 0,
-      active: coupon.active !== false,
-      createdAt: now,
-      updatedAt: now
+      active: coupon.active !== false
     };
 
-    console.log('[Atelier V] Initiating createCoupon for:', newCoupon.code, newCoupon);
+    console.log('[Atelier V] Calling POST /api/coupons for:', newCoupon.code);
 
-    // 1. Direct Supabase save (Primary persistent storage)
-    if (isSupabaseConnected()) {
-      const spRes = await saveCouponToSupabase(newCoupon);
-      console.log('[Atelier V] Supabase saveCoupon response:', spRes);
-      if (!spRes.success) {
-        const errorMsg = spRes.error || 'Failed to persist coupon in Supabase database';
-        console.error('[Atelier V] Supabase save error detail:', errorMsg);
-        if (errorMsg.includes('duplicate key') || errorMsg.includes('already exists')) {
-          throw new Error(`Coupon code '${rawCode}' already exists in database`);
-        }
-        throw new Error(errorMsg);
-      }
-    } else {
-      console.warn('[Atelier V] Supabase not connected during createCoupon; using local fallback');
+    const res = await apiFetch('/api/coupons', {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify(newCoupon)
+    });
+
+    if (!res.ok) {
+      const errData = await res.json().catch(() => ({}));
+      const errMsg = errData.error || `Failed to create coupon (${res.status})`;
+      console.error('[Atelier V] Server createCoupon error:', errMsg);
+      throw new Error(errMsg);
     }
 
-    // 2. Server API sync (keep backend database in sync)
-    try {
-      apiFetch('/api/coupons', {
-        method: 'POST',
-        headers: getAuthHeaders(),
-        body: JSON.stringify(newCoupon)
-      }).catch((e) => console.warn('Background server sync notice:', e));
-    } catch {
-      // Background sync is non-blocking
-    }
+    const savedCoupon: Coupon = await res.json();
+    console.log('[Atelier V] Server confirmed coupon created:', savedCoupon.code);
 
-    // 3. Update localStorage cache
+    // Update localStorage cache
     if (typeof window !== 'undefined') {
       try {
         const cached = localStorage.getItem('atelierv_coupons_cache');
         const list: Coupon[] = cached ? JSON.parse(cached) : [];
-        const filtered = list.filter(c => c.code.toUpperCase() !== newCoupon.code.toUpperCase());
-        localStorage.setItem('atelierv_coupons_cache', JSON.stringify([newCoupon, ...filtered]));
+        const filtered = list.filter(c => c.code.toUpperCase() !== savedCoupon.code.toUpperCase() && c.id !== savedCoupon.id);
+        localStorage.setItem('atelierv_coupons_cache', JSON.stringify([savedCoupon, ...filtered]));
       } catch {}
     }
 
-    return newCoupon;
+    return savedCoupon;
   },
 
   async updateCoupon(id: string, coupon: Partial<Coupon>): Promise<Coupon> {
     const cleanId = String(id).trim();
-    const updatedCoupon: Coupon = {
-      id: cleanId,
+    const payload = {
       ...coupon,
-      code: coupon.code ? String(coupon.code).trim().toUpperCase() : '',
-      updatedAt: new Date().toISOString()
-    } as Coupon;
+      code: coupon.code ? String(coupon.code).trim().toUpperCase() : undefined
+    };
 
-    console.log('[Atelier V] Initiating updateCoupon for:', cleanId, updatedCoupon);
+    console.log('[Atelier V] Calling PUT /api/coupons for:', cleanId);
 
-    // 1. Update in Supabase
-    if (isSupabaseConnected()) {
-      const spRes = await saveCouponToSupabase(updatedCoupon);
-      console.log('[Atelier V] Supabase updateCoupon response:', spRes);
-      if (!spRes.success) {
-        throw new Error(spRes.error || 'Failed to update coupon in Supabase database');
-      }
+    const res = await apiFetch(`/api/coupons/${encodeURIComponent(cleanId)}`, {
+      method: 'PUT',
+      headers: getAuthHeaders(),
+      body: JSON.stringify(payload)
+    });
+
+    if (!res.ok) {
+      const errData = await res.json().catch(() => ({}));
+      const errMsg = errData.error || `Failed to update coupon (${res.status})`;
+      console.error('[Atelier V] Server updateCoupon error:', errMsg);
+      throw new Error(errMsg);
     }
 
-    // 2. Server API call
-    try {
-      apiFetch(`/api/coupons/${encodeURIComponent(cleanId)}`, {
-        method: 'PUT',
-        headers: getAuthHeaders(),
-        body: JSON.stringify(updatedCoupon)
-      }).catch(() => {});
-    } catch {}
+    const updatedCoupon: Coupon = await res.json();
 
-    // 3. Update localStorage cache
+    // Update localStorage cache
     if (typeof window !== 'undefined') {
       try {
         const cached = localStorage.getItem('atelierv_coupons_cache');
@@ -656,23 +635,21 @@ export const api = {
   async deleteCoupon(id: string): Promise<boolean> {
     const cleanId = String(id).trim();
 
-    // 1. Delete in Supabase
-    if (isSupabaseConnected()) {
-      const spRes = await deleteCouponFromSupabase(cleanId);
-      if (!spRes.success) {
-        throw new Error(spRes.error || 'Failed to delete coupon from Supabase database');
-      }
+    console.log('[Atelier V] Calling DELETE /api/coupons for:', cleanId);
+
+    const res = await apiFetch(`/api/coupons/${encodeURIComponent(cleanId)}`, {
+      method: 'DELETE',
+      headers: getAuthHeaders()
+    });
+
+    if (!res.ok) {
+      const errData = await res.json().catch(() => ({}));
+      const errMsg = errData.error || `Failed to delete coupon (${res.status})`;
+      console.error('[Atelier V] Server deleteCoupon error:', errMsg);
+      throw new Error(errMsg);
     }
 
-    // 2. Server API call
-    try {
-      apiFetch(`/api/coupons/${encodeURIComponent(cleanId)}`, {
-        method: 'DELETE',
-        headers: getAuthHeaders()
-      }).catch(() => {});
-    } catch {}
-
-    // 3. Update localStorage cache
+    // Update localStorage cache
     if (typeof window !== 'undefined') {
       try {
         const cached = localStorage.getItem('atelierv_coupons_cache');
@@ -693,7 +670,8 @@ export const api = {
       throw new Error('Please enter a promotional code');
     }
 
-    // 1. Try server-side validation (authoritative)
+    // 1. Try server-side validation (authoritative against public.coupons)
+    // Fix request field mismatch: provide both cartTotal and subtotal
     try {
       const res = await apiFetch('/api/coupons/validate', {
         method: 'POST',
@@ -713,7 +691,7 @@ export const api = {
       }
     }
 
-    // 2. Client-side fallback if network offline
+    // 2. Client-side fallback if network is completely offline
     let couponsToCheck: Coupon[] = INITIAL_COUPONS;
     if (typeof window !== 'undefined') {
       try {

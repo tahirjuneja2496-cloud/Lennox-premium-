@@ -201,7 +201,7 @@
       "price": 680,
       "originalPrice": 850,
       "discountPercent": 20,
-      "stock": 7,
+      "stock": 6,
       "lowStockThreshold": 3,
       "images": [
         "/src/assets/images/product_sculptural_lamp_1790850449675.jpg",
@@ -507,6 +507,43 @@
   ],
   "orders": [
     {
+      "id": "ORD-20261011-1161",
+      "customer": {
+        "fullName": "Test Patron",
+        "mobileNumber": "9876543210",
+        "address": "10 Downing Road, Suite 4",
+        "city": "Mumbai",
+        "state": "Maharashtra",
+        "pincode": "400001"
+      },
+      "items": [
+        {
+          "productId": "prod-001",
+          "productName": "Silk Chiffon Gown",
+          "sku": "ATV-SCG-01",
+          "price": 1000,
+          "quantity": 1,
+          "subtotal": 1000,
+          "image": "https://images.unsplash.com/photo-1539109136881-3be0616acf4b"
+        }
+      ],
+      "pricing": {
+        "subtotal": 1000,
+        "discount": 250,
+        "couponCode": "TESTPERSIST_3714",
+        "shipping": 0,
+        "grandTotal": 750
+      },
+      "payment": {
+        "method": "card",
+        "status": "pending",
+        "transactionId": "COD_1791713057164"
+      },
+      "status": "Pending",
+      "createdAt": "2026-10-11T10:04:17.164Z",
+      "updatedAt": "2026-10-11T10:04:17.164Z"
+    },
+    {
       "id": "ORD-20261011-7351",
       "customer": {
         "fullName": "Test Patron",
@@ -637,13 +674,43 @@
       "phone": "9876543210",
       "city": "Mumbai",
       "country": "India",
-      "totalOrders": 2,
-      "totalSpent": 794,
+      "totalOrders": 3,
+      "totalSpent": 1544,
       "lastOrderDate": "2026-10-11",
       "status": "Active"
     }
   ],
   "coupons": [
+    {
+      "id": "coup-1791712340828",
+      "code": "LENNOX10-9K0W",
+      "discountType": "percentage",
+      "discountValue": 15,
+      "minOrderValue": 500,
+      "maxDiscount": 1000,
+      "startDate": "2026-10-11",
+      "expiresAt": "2027-10-11",
+      "usageLimit": 100,
+      "usedCount": 0,
+      "active": true,
+      "createdAt": "2026-10-11T09:52:20.828+00:00",
+      "updatedAt": "2026-10-11T09:52:20.828+00:00"
+    },
+    {
+      "id": "coup-1791712310568",
+      "code": "ATELIER15-12KM",
+      "discountType": "percentage",
+      "discountValue": 15,
+      "minOrderValue": 500,
+      "maxDiscount": 1000,
+      "startDate": "2026-10-11",
+      "expiresAt": "2027-10-11",
+      "usageLimit": 100,
+      "usedCount": 0,
+      "active": true,
+      "createdAt": "2026-10-11T09:51:50.568+00:00",
+      "updatedAt": "2026-10-11T09:51:50.569+00:00"
+    },
     {
       "id": "coup-1791712222498-9nbbb",
       "code": "LENNOX25",
@@ -656,8 +723,23 @@
       "usageLimit": 100,
       "usedCount": 0,
       "active": true,
-      "createdAt": "2026-10-11T09:50:22.961Z",
-      "updatedAt": "2026-10-11T09:50:22.961Z"
+      "createdAt": "2026-10-11T09:50:22.961+00:00",
+      "updatedAt": "2026-10-11T09:50:22.961+00:00"
+    },
+    {
+      "id": "coup-1791712132538-6rv9i",
+      "code": "SAVE6489",
+      "discountType": "percentage",
+      "discountValue": 20,
+      "minOrderValue": 300,
+      "maxDiscount": 500,
+      "startDate": "2026-10-11",
+      "expiresAt": "2027-10-11",
+      "usageLimit": 50,
+      "usedCount": 0,
+      "active": true,
+      "createdAt": "2026-10-11T09:48:52.537+00:00",
+      "updatedAt": "2026-10-11T09:48:52.538+00:00"
     },
     {
       "id": "coup-1791711625947",
@@ -670,42 +752,8 @@
       "usageLimit": 100,
       "usedCount": 0,
       "active": true,
-      "createdAt": "2026-10-11T09:40:25.947Z",
-      "updatedAt": "2026-10-11T09:40:25.947Z"
-    },
-    {
-      "id": "coup-001",
-      "code": "LUXE15",
-      "discountType": "percentage",
-      "discountValue": 15,
-      "minOrderValue": 200,
-      "maxDiscount": 300,
-      "expiresAt": "2026-12-31",
-      "usageLimit": 100,
-      "usedCount": 24,
-      "active": true
-    },
-    {
-      "id": "coup-002",
-      "code": "ATELIER150",
-      "discountType": "fixed",
-      "discountValue": 150,
-      "minOrderValue": 1000,
-      "expiresAt": "2026-11-30",
-      "usageLimit": 50,
-      "usedCount": 12,
-      "active": true
-    },
-    {
-      "id": "coup-003",
-      "code": "WELCOME10",
-      "discountType": "percentage",
-      "discountValue": 10,
-      "minOrderValue": 100,
-      "expiresAt": "2027-01-01",
-      "usageLimit": 500,
-      "usedCount": 88,
-      "active": true
+      "createdAt": "2026-10-11T09:40:25.947+00:00",
+      "updatedAt": "2026-10-11T09:40:25.947+00:00"
     },
     {
       "id": "coup-diag-1791711513937",
@@ -714,8 +762,8 @@
       "discountValue": 15,
       "minOrderValue": 200,
       "maxDiscount": 300,
-      "startDate": "2026-10-11T09:38:33.937+00:00",
-      "expiresAt": "2026-10-12T09:38:33.937+00:00",
+      "startDate": "2026-10-11",
+      "expiresAt": "2026-10-12",
       "usageLimit": 100,
       "usedCount": 0,
       "active": true,
@@ -729,8 +777,8 @@
       "discountValue": 15,
       "minOrderValue": 500,
       "maxDiscount": 1000,
-      "startDate": "2026-10-11T00:00:00+00:00",
-      "expiresAt": "2027-10-11T00:00:00+00:00",
+      "startDate": "2026-10-11",
+      "expiresAt": "2027-10-11",
       "usageLimit": 100,
       "usedCount": 0,
       "active": true,
@@ -738,14 +786,14 @@
       "updatedAt": "2026-10-11T09:34:31.388+00:00"
     },
     {
-      "id": "coup-1791711249223",
+      "id": "coup-new-id-1791711914511",
       "code": "ATELIER15-ERBO",
       "discountType": "percentage",
       "discountValue": 15,
       "minOrderValue": 500,
       "maxDiscount": 1000,
-      "startDate": "2026-10-11T00:00:00+00:00",
-      "expiresAt": "2027-10-11T00:00:00+00:00",
+      "startDate": "2026-10-11",
+      "expiresAt": "2026-10-12",
       "usageLimit": 100,
       "usedCount": 0,
       "active": true,

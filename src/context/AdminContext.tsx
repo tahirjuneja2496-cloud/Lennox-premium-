@@ -110,7 +110,7 @@ export const AdminProvider: React.FC<{ children: ReactNode }> = ({ children }) =
       ]);
       setOrders(oData);
       setCustomers(cData);
-      if (Array.isArray(coupData) && coupData.length > 0) {
+      if (Array.isArray(coupData)) {
         setCoupons(coupData);
       }
       setReviews(rData);
@@ -278,14 +278,8 @@ export const AdminProvider: React.FC<{ children: ReactNode }> = ({ children }) =
       // and display the saved database records. Preserve existing records when a fetch fails.
       try {
         const freshCoupons = await api.getCoupons();
-        if (Array.isArray(freshCoupons) && freshCoupons.length > 0) {
+        if (Array.isArray(freshCoupons)) {
           setCoupons(freshCoupons);
-        } else {
-          setCoupons((prev) =>
-            isEdit
-              ? prev.map((c) => (c.id === saved.id || c.code.toUpperCase() === saved.code.toUpperCase() ? saved : c))
-              : [saved, ...prev.filter((c) => c.code.toUpperCase() !== saved.code.toUpperCase())]
-          );
         }
       } catch (fetchErr) {
         console.warn('[Atelier V] Post-save coupon refresh notice, preserving existing records:', fetchErr);
