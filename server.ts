@@ -23,7 +23,12 @@ import {
   uploadImageToSupabase,
   getProductsFromSupabase,
   saveProductToSupabase,
-  deleteProductFromSupabase
+  deleteProductFromSupabase,
+  getCouponsFromSupabase,
+  saveCouponToSupabase,
+  deleteCouponFromSupabase,
+  incrementCouponUsageInSupabase,
+  COUPON_MIGRATION_SQL
 } from './src/db/supabase.ts';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -626,6 +631,82 @@ app.post('/api/orders', async (req: Request, res: Response) => {
     const randSeq = Math.floor(1000 + Math.random() * 9000);
     const orderId = `ORD-${dateStr}-${randSeq}`;
 
+    // Calculate verified item subtotal on server
+    const verifiedSubtotal = items.reduce(
+      (sum: number, it: any) => sum + (Number(it.price) * Number(it.quantity)),
+      0
+    );
+
+    // Secure Server-side Coupon Revalidation & Enforcement
+    let verifiedDiscount = 0;
+    let verifiedCouponCode: string | undefined = undefined;
+
+    if (pricing?.couponCode && String(pricing.couponCode).trim()) {
+      const inputCode = String(pricing.couponCode).trim().toUpperCase();
+
+      // Look up coupon from Supabase or db.coupons
+      let coupon: Coupon | undefined = undefined;
+      if (isSupabaseConnected()) {
+        try {
+          const spRes = await getCouponsFromSupabase();
+          if (spRes.coupons && spRes.coupons.length > 0) {
+            coupon = spRes.coupons.find(c => c.code.toUpperCase() === inputCode);
+          }
+        } catch {
+          // Fall back to local db
+        }
+      }
+      if (!coupon) {
+        coupon = db.coupons.find(c => c.code.toUpperCase() === inputCode);
+      }
+
+      if (!coupon) {
+        return res.status(400).json({ error: `Promotional code '${inputCode}' is invalid` });
+      }
+      if (!coupon.active) {
+        return res.status(400).json({ error: `Promotional code '${inputCode}' is no longer active` });
+      }
+      if (coupon.startDate && new Date(coupon.startDate) > new Date()) {
+        return res.status(400).json({ error: `Promotional code '${inputCode}' is not active yet` });
+      }
+      if (coupon.expiresAt && new Date(coupon.expiresAt) < new Date()) {
+        return res.status(400).json({ error: `Promotional code '${inputCode}' has expired` });
+      }
+      if (coupon.usageLimit && coupon.usedCount >= coupon.usageLimit) {
+        return res.status(400).json({ error: `Promotional code '${inputCode}' has reached its usage limit` });
+      }
+      if (coupon.minOrderValue && verifiedSubtotal < coupon.minOrderValue) {
+        return res.status(400).json({
+          error: `Minimum order value of ₹${coupon.minOrderValue} required for code '${inputCode}'`
+        });
+      }
+
+      // Calculate server-authoritative discount
+      if (coupon.discountType === 'percentage') {
+        verifiedDiscount = (verifiedSubtotal * coupon.discountValue) / 100;
+        if (coupon.maxDiscount && verifiedDiscount > coupon.maxDiscount) {
+          verifiedDiscount = coupon.maxDiscount;
+        }
+      } else {
+        verifiedDiscount = Math.min(coupon.discountValue, verifiedSubtotal);
+      }
+      verifiedDiscount = Math.round(verifiedDiscount * 100) / 100;
+      verifiedCouponCode = coupon.code;
+
+      // Increment coupon usage in memory/db and in Supabase
+      coupon.usedCount = (coupon.usedCount || 0) + 1;
+      const dbCouponIdx = db.coupons.findIndex(c => c.code.toUpperCase() === inputCode);
+      if (dbCouponIdx !== -1) {
+        db.coupons[dbCouponIdx].usedCount = coupon.usedCount;
+      }
+      if (isSupabaseConnected()) {
+        incrementCouponUsageInSupabase(coupon.code).catch(() => {});
+      }
+    }
+
+    const verifiedShipping = verifiedSubtotal >= 250 ? 0 : 25;
+    const verifiedGrandTotal = Math.max(0, Math.round((verifiedSubtotal - verifiedDiscount + verifiedShipping) * 100) / 100);
+
     const newOrder: Order = {
       id: orderId,
       customer: {
@@ -638,11 +719,11 @@ app.post('/api/orders', async (req: Request, res: Response) => {
       },
       items,
       pricing: {
-        subtotal: pricing?.subtotal || 0,
-        discount: pricing?.discount || 0,
-        couponCode: pricing?.couponCode,
-        shipping: pricing?.shipping || 0,
-        grandTotal: pricing?.grandTotal || 0
+        subtotal: verifiedSubtotal,
+        discount: verifiedDiscount,
+        couponCode: verifiedCouponCode,
+        shipping: verifiedShipping,
+        grandTotal: verifiedGrandTotal
       },
       payment: {
         method: payment?.method || 'cod',
@@ -677,16 +758,6 @@ app.post('/api/orders', async (req: Request, res: Response) => {
         status: newOrder.pricing.grandTotal > 50000 ? 'VIP' : 'Active'
       };
       db.customers.unshift(newCust);
-    }
-
-    // Increment coupon redemptions
-    if (newOrder.pricing.couponCode) {
-      const coupon = db.coupons.find(
-        c => c.code.toUpperCase() === newOrder.pricing.couponCode?.toUpperCase()
-      );
-      if (coupon) {
-        coupon.usedCount += 1;
-      }
     }
 
     // 1. Persist to local database
@@ -744,9 +815,57 @@ app.get('/api/customers', requireAdmin, async (req: Request, res: Response) => {
 // -------------------------------------------------------------
 // API: Coupons
 // -------------------------------------------------------------
+app.get('/api/coupons/status', async (req: Request, res: Response) => {
+  try {
+    if (!isSupabaseConnected()) {
+      return res.json({
+        supabaseConnected: false,
+        tableMissing: true,
+        migrationSql: COUPON_MIGRATION_SQL
+      });
+    }
+    const spRes = await getCouponsFromSupabase();
+    res.json({
+      supabaseConnected: spRes.connected,
+      tableMissing: spRes.tableMissing,
+      count: spRes.coupons ? spRes.coupons.length : 0,
+      error: spRes.error,
+      migrationSql: COUPON_MIGRATION_SQL
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: err?.message || 'Failed to check coupon database status' });
+  }
+});
+
 app.get('/api/coupons', async (req: Request, res: Response) => {
   try {
     const db = await readDatabase();
+
+    // 1. Sync from Supabase if connected
+    if (isSupabaseConnected()) {
+      try {
+        const spRes = await getCouponsFromSupabase();
+        if (spRes.connected && !spRes.tableMissing && Array.isArray(spRes.coupons)) {
+          if (spRes.coupons.length > 0) {
+            // Merge Supabase coupons into db.coupons
+            const mergedMap = new Map<string, Coupon>();
+            db.coupons.forEach(c => mergedMap.set(c.code.toUpperCase(), c));
+            spRes.coupons.forEach(c => mergedMap.set(c.code.toUpperCase(), c));
+            db.coupons = Array.from(mergedMap.values());
+            await writeDatabase(db);
+            return res.json(db.coupons);
+          } else if (spRes.coupons.length === 0 && db.coupons.length > 0) {
+            // Seed local coupons to Supabase
+            for (const c of db.coupons) {
+              await saveCouponToSupabase(c);
+            }
+          }
+        }
+      } catch (e) {
+        console.warn('Coupon Supabase sync warning:', e);
+      }
+    }
+
     res.json(db.coupons);
   } catch (err) {
     res.status(500).json({ error: 'Failed to fetch coupons' });
@@ -756,17 +875,54 @@ app.get('/api/coupons', async (req: Request, res: Response) => {
 app.post('/api/coupons', async (req: Request, res: Response) => {
   try {
     const db = await readDatabase();
+    const rawCode = req.body.code ? String(req.body.code).trim().toUpperCase() : '';
+    if (!rawCode) {
+      return res.status(400).json({ error: 'Coupon code is required' });
+    }
+
+    // Check for duplicate code
+    const existing = db.coupons.find(c => c.code.toUpperCase() === rawCode);
+    if (existing) {
+      return res.status(400).json({ error: `Coupon code '${rawCode}' already exists` });
+    }
+
+    const now = new Date().toISOString();
     const newCoupon: Coupon = {
-      ...req.body,
-      id: `coup-${Date.now()}`,
-      code: req.body.code.toUpperCase(),
-      usedCount: 0
+      id: req.body.id || `coup-${Date.now()}`,
+      code: rawCode,
+      discountType: req.body.discountType === 'fixed' ? 'fixed' : 'percentage',
+      discountValue: Math.max(0, Number(req.body.discountValue ?? 10)),
+      minOrderValue: Math.max(0, Number(req.body.minOrderValue ?? 0)),
+      maxDiscount: req.body.maxDiscount !== undefined && req.body.maxDiscount !== null ? Number(req.body.maxDiscount) : undefined,
+      startDate: req.body.startDate || now.slice(0, 10),
+      expiresAt: req.body.expiresAt || new Date(Date.now() + 365 * 86400000).toISOString().slice(0, 10),
+      usageLimit: Math.max(1, Number(req.body.usageLimit ?? 100)),
+      usedCount: 0,
+      active: req.body.active !== false,
+      createdAt: now,
+      updatedAt: now
     };
-    db.coupons.push(newCoupon);
+
+    // 1. Persist to Supabase if connected
+    if (isSupabaseConnected()) {
+      try {
+        const spResult = await saveCouponToSupabase(newCoupon);
+        if (spResult.error && !spResult.tableMissing) {
+          console.warn('[Atelier V] Supabase coupon save notice:', spResult.error);
+        }
+      } catch (err: any) {
+        console.warn('[Atelier V] Supabase coupon save exception:', err);
+      }
+    }
+
+    // 2. Persist to database file
+    db.coupons.unshift(newCoupon);
     await writeDatabase(db);
+
     res.status(201).json(newCoupon);
-  } catch (err) {
-    res.status(500).json({ error: 'Failed to create coupon' });
+  } catch (err: any) {
+    console.error('Coupon creation error:', err);
+    res.status(500).json({ error: err?.message || 'Failed to create coupon' });
   }
 });
 
@@ -774,13 +930,31 @@ app.put('/api/coupons/:id', async (req: Request, res: Response) => {
   try {
     const db = await readDatabase();
     const { id } = req.params;
-    const index = db.coupons.findIndex(c => c.id === id);
+    const index = db.coupons.findIndex(c => c.id === id || c.code.toUpperCase() === id.toUpperCase());
     if (index === -1) return res.status(404).json({ error: 'Coupon not found' });
-    db.coupons[index] = { ...db.coupons[index], ...req.body };
+
+    const updatedCoupon: Coupon = {
+      ...db.coupons[index],
+      ...req.body,
+      code: req.body.code ? String(req.body.code).trim().toUpperCase() : db.coupons[index].code,
+      updatedAt: new Date().toISOString()
+    };
+
+    db.coupons[index] = updatedCoupon;
     await writeDatabase(db);
-    res.json(db.coupons[index]);
-  } catch (err) {
-    res.status(500).json({ error: 'Failed to update coupon' });
+
+    // Persist to Supabase
+    if (isSupabaseConnected()) {
+      try {
+        await saveCouponToSupabase(updatedCoupon);
+      } catch (err) {
+        console.warn('Supabase update coupon notice:', err);
+      }
+    }
+
+    res.json(updatedCoupon);
+  } catch (err: any) {
+    res.status(500).json({ error: err?.message || 'Failed to update coupon' });
   }
 });
 
@@ -788,38 +962,70 @@ app.delete('/api/coupons/:id', async (req: Request, res: Response) => {
   try {
     const db = await readDatabase();
     const { id } = req.params;
-    const index = db.coupons.findIndex(c => c.id === id);
+    const index = db.coupons.findIndex(c => c.id === id || c.code.toUpperCase() === id.toUpperCase());
     if (index === -1) return res.status(404).json({ error: 'Coupon not found' });
+
+    const deletedCode = db.coupons[index].code;
     db.coupons.splice(index, 1);
     await writeDatabase(db);
-    res.json({ success: true });
-  } catch (err) {
-    res.status(500).json({ error: 'Failed to delete coupon' });
+
+    // Delete from Supabase
+    if (isSupabaseConnected()) {
+      try {
+        await deleteCouponFromSupabase(id);
+      } catch (err) {
+        console.warn('Supabase delete coupon notice:', err);
+      }
+    }
+
+    res.json({ success: true, code: deletedCode });
+  } catch (err: any) {
+    res.status(500).json({ error: err?.message || 'Failed to delete coupon' });
   }
 });
 
 app.post('/api/coupons/validate', async (req: Request, res: Response) => {
   try {
     const db = await readDatabase();
-    const { code, subtotal } = req.body;
-    if (!code) return res.status(400).json({ error: 'Coupon code required' });
+    const rawCode = req.body.code ? String(req.body.code).trim().toUpperCase() : '';
+    const subtotal = Number(req.body.subtotal ?? req.body.cartTotal ?? 0);
 
-    const coupon = db.coupons.find(c => c.code.toUpperCase() === code.trim().toUpperCase());
+    if (!rawCode) return res.status(400).json({ error: 'Coupon code required' });
+
+    // Look up coupon (Supabase first, then local db)
+    let coupon: Coupon | undefined = undefined;
+    if (isSupabaseConnected()) {
+      try {
+        const spRes = await getCouponsFromSupabase();
+        if (spRes.coupons && spRes.coupons.length > 0) {
+          coupon = spRes.coupons.find(c => c.code.toUpperCase() === rawCode);
+        }
+      } catch {
+        // Fall back to db
+      }
+    }
     if (!coupon) {
-      return res.status(404).json({ error: 'Invalid coupon code' });
+      coupon = db.coupons.find(c => c.code.toUpperCase() === rawCode);
+    }
+
+    if (!coupon) {
+      return res.status(404).json({ error: `Promotional code '${rawCode}' is invalid` });
     }
     if (!coupon.active) {
-      return res.status(400).json({ error: 'This coupon is no longer active' });
+      return res.status(400).json({ error: `Promotional code '${rawCode}' is no longer active` });
     }
-    if (coupon.usedCount >= coupon.usageLimit) {
-      return res.status(400).json({ error: 'This coupon has reached its usage limit' });
+    if (coupon.startDate && new Date(coupon.startDate) > new Date()) {
+      return res.status(400).json({ error: `Promotional code '${rawCode}' will become active on ${coupon.startDate}` });
     }
-    if (new Date(coupon.expiresAt) < new Date()) {
-      return res.status(400).json({ error: 'This coupon has expired' });
+    if (coupon.expiresAt && new Date(coupon.expiresAt) < new Date()) {
+      return res.status(400).json({ error: `Promotional code '${rawCode}' expired on ${coupon.expiresAt}` });
     }
-    if (subtotal < coupon.minOrderValue) {
+    if (coupon.usageLimit && coupon.usedCount >= coupon.usageLimit) {
+      return res.status(400).json({ error: `Promotional code '${rawCode}' has reached its maximum redemptions` });
+    }
+    if (coupon.minOrderValue && subtotal < coupon.minOrderValue) {
       return res.status(400).json({
-        error: `Minimum order value of ₹${coupon.minOrderValue} required for this coupon`
+        error: `Minimum order value of ₹${coupon.minOrderValue} required for code '${rawCode}'`
       });
     }
 
@@ -838,10 +1044,12 @@ app.post('/api/coupons/validate', async (req: Request, res: Response) => {
       code: coupon.code,
       discountAmount: Math.round(discountAmount * 100) / 100,
       discountType: coupon.discountType,
-      discountValue: coupon.discountValue
+      discountValue: coupon.discountValue,
+      minOrderValue: coupon.minOrderValue,
+      maxDiscount: coupon.maxDiscount
     });
-  } catch (err) {
-    res.status(500).json({ error: 'Failed to validate coupon' });
+  } catch (err: any) {
+    res.status(500).json({ error: err?.message || 'Failed to validate coupon' });
   }
 });
 

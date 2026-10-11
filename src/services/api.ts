@@ -17,8 +17,12 @@ import {
   getOrdersFromSupabase,
   saveOrderToSupabase,
   updateOrderInSupabase,
+  getCouponsFromSupabase,
+  saveCouponToSupabase,
+  deleteCouponFromSupabase,
   isSupabaseConnected,
-  isTableMissingError
+  isTableMissingError,
+  COUPON_MIGRATION_SQL
 } from '../db/supabase';
 
 let cachedAdminToken: string | null = null;
@@ -450,103 +454,313 @@ export const api = {
 
   // Coupons
   async getCoupons(): Promise<Coupon[]> {
+    // 1. Try server endpoint
     try {
       const res = await fetch('/api/coupons', {
         headers: getAuthHeaders()
       });
-      if (res.ok) return await res.json();
-    } catch {
-      // Fallback
+      if (res.ok) {
+        const data = await res.json();
+        if (Array.isArray(data) && data.length > 0) {
+          if (typeof window !== 'undefined') {
+            try {
+              localStorage.setItem('atelierv_coupons_cache', JSON.stringify(data));
+            } catch {}
+          }
+          return data;
+        }
+      }
+    } catch (err) {
+      console.warn('API getCoupons notice:', err);
     }
+
+    // 2. Direct Supabase read if server is unreachable
+    if (isSupabaseConnected()) {
+      try {
+        const spRes = await getCouponsFromSupabase();
+        if (spRes.connected && !spRes.tableMissing && spRes.coupons.length > 0) {
+          if (typeof window !== 'undefined') {
+            try {
+              localStorage.setItem('atelierv_coupons_cache', JSON.stringify(spRes.coupons));
+            } catch {}
+          }
+          return spRes.coupons;
+        }
+      } catch (e) {
+        console.warn('Direct Supabase coupon fetch notice:', e);
+      }
+    }
+
+    // 3. Check client localStorage cache
+    if (typeof window !== 'undefined') {
+      try {
+        const cached = localStorage.getItem('atelierv_coupons_cache');
+        if (cached) {
+          const parsed = JSON.parse(cached);
+          if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+        }
+      } catch {}
+    }
+
     return INITIAL_COUPONS;
   },
 
+  async getCouponDatabaseStatus(): Promise<{ supabaseConnected: boolean; tableMissing: boolean; count: number; error?: string; migrationSql: string }> {
+    try {
+      const res = await fetch('/api/coupons/status');
+      if (res.ok) return await res.json();
+    } catch {}
+
+    if (isSupabaseConnected()) {
+      try {
+        const sp = await getCouponsFromSupabase();
+        return {
+          supabaseConnected: sp.connected,
+          tableMissing: sp.tableMissing,
+          count: sp.coupons.length,
+          error: sp.error,
+          migrationSql: COUPON_MIGRATION_SQL
+        };
+      } catch {}
+    }
+
+    return {
+      supabaseConnected: false,
+      tableMissing: true,
+      count: 0,
+      migrationSql: COUPON_MIGRATION_SQL
+    };
+  },
+
   async createCoupon(coupon: Partial<Coupon>): Promise<Coupon> {
+    const rawCode = coupon.code ? String(coupon.code).trim().toUpperCase() : '';
+    if (!rawCode) {
+      throw new Error('Coupon code is required');
+    }
+
+    const now = new Date().toISOString();
     const newCoupon: Coupon = {
       id: coupon.id || `coup-${Date.now()}`,
-      code: (coupon.code || 'SAVE10').toUpperCase().trim(),
-      discountType: coupon.discountType || 'percentage',
-      discountValue: coupon.discountValue || 10,
-      minOrderValue: coupon.minOrderValue || 0,
-      maxDiscount: coupon.maxDiscount,
-      usageLimit: coupon.usageLimit || 100,
-      usedCount: coupon.usedCount || 0,
-      expiresAt: coupon.expiresAt || new Date(Date.now() + 30 * 86400000).toISOString(),
-      active: coupon.active !== false
+      code: rawCode,
+      discountType: coupon.discountType === 'fixed' ? 'fixed' : 'percentage',
+      discountValue: Math.max(0, Number(coupon.discountValue ?? 10)),
+      minOrderValue: Math.max(0, Number(coupon.minOrderValue ?? 0)),
+      maxDiscount: coupon.maxDiscount !== undefined && coupon.maxDiscount !== null ? Number(coupon.maxDiscount) : undefined,
+      startDate: coupon.startDate || now.slice(0, 10),
+      expiresAt: coupon.expiresAt || new Date(Date.now() + 365 * 86400000).toISOString().slice(0, 10),
+      usageLimit: Math.max(1, Number(coupon.usageLimit ?? 100)),
+      usedCount: 0,
+      active: coupon.active !== false,
+      createdAt: now,
+      updatedAt: now
     };
 
+    // 1. Direct Supabase save if client connected
+    if (isSupabaseConnected()) {
+      try {
+        const spRes = await saveCouponToSupabase(newCoupon);
+        if (spRes.error && !spRes.tableMissing) {
+          console.warn('[Atelier V] Supabase coupon save notice:', spRes.error);
+        }
+      } catch (e) {
+        console.warn('[Atelier V] Client Supabase coupon save notice:', e);
+      }
+    }
+
+    // 2. Server API call
+    let serverSaved: Coupon = newCoupon;
     try {
       const res = await fetch('/api/coupons', {
         method: 'POST',
         headers: getAuthHeaders(),
         body: JSON.stringify(newCoupon)
       });
-      if (res.ok) return await res.json();
-    } catch {
-      // Fallback
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        throw new Error(errData.error || `Failed to create coupon (HTTP ${res.status})`);
+      }
+      serverSaved = await res.json();
+    } catch (err: any) {
+      if (err.message && err.message.includes('already exists')) {
+        throw err;
+      }
+      console.warn('Server coupon create warning, retaining local persistence:', err);
     }
-    return newCoupon;
+
+    // 3. Update localStorage cache
+    if (typeof window !== 'undefined') {
+      try {
+        const cached = localStorage.getItem('atelierv_coupons_cache');
+        const list: Coupon[] = cached ? JSON.parse(cached) : [];
+        const filtered = list.filter(c => c.code.toUpperCase() !== serverSaved.code.toUpperCase());
+        localStorage.setItem('atelierv_coupons_cache', JSON.stringify([serverSaved, ...filtered]));
+      } catch {}
+    }
+
+    return serverSaved;
   },
 
   async updateCoupon(id: string, coupon: Partial<Coupon>): Promise<Coupon> {
+    const cleanId = String(id).trim();
+
+    // 1. Update in Supabase
+    if (isSupabaseConnected()) {
+      try {
+        await saveCouponToSupabase({ id: cleanId, ...coupon } as Coupon);
+      } catch (e) {
+        console.warn('Supabase coupon update notice:', e);
+      }
+    }
+
+    // 2. Server API call
+    let updated: Coupon = { id: cleanId, ...coupon } as Coupon;
     try {
-      const res = await fetch(`/api/coupons/${id}`, {
+      const res = await fetch(`/api/coupons/${encodeURIComponent(cleanId)}`, {
         method: 'PUT',
         headers: getAuthHeaders(),
         body: JSON.stringify(coupon)
       });
-      if (res.ok) return await res.json();
-    } catch {
-      // Fallback
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        throw new Error(errData.error || `Failed to update coupon (HTTP ${res.status})`);
+      }
+      updated = await res.json();
+    } catch (err: any) {
+      console.warn('Server coupon update notice:', err);
     }
-    return { id, ...coupon } as Coupon;
+
+    // 3. Update localStorage cache
+    if (typeof window !== 'undefined') {
+      try {
+        const cached = localStorage.getItem('atelierv_coupons_cache');
+        if (cached) {
+          const list: Coupon[] = JSON.parse(cached);
+          const mapped = list.map(c => (c.id === cleanId || c.code.toUpperCase() === (coupon.code || '').toUpperCase() ? { ...c, ...updated } : c));
+          localStorage.setItem('atelierv_coupons_cache', JSON.stringify(mapped));
+        }
+      } catch {}
+    }
+
+    return updated;
   },
 
   async deleteCoupon(id: string): Promise<boolean> {
+    const cleanId = String(id).trim();
+
+    // 1. Delete in Supabase
+    if (isSupabaseConnected()) {
+      try {
+        await deleteCouponFromSupabase(cleanId);
+      } catch (e) {
+        console.warn('Supabase coupon delete notice:', e);
+      }
+    }
+
+    // 2. Server API call
     try {
-      await fetch(`/api/coupons/${id}`, {
+      const res = await fetch(`/api/coupons/${encodeURIComponent(cleanId)}`, {
         method: 'DELETE',
         headers: getAuthHeaders()
       });
-    } catch {
-      // Fallback
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        throw new Error(errData.error || `Failed to delete coupon (HTTP ${res.status})`);
+      }
+    } catch (err: any) {
+      console.warn('Server coupon delete notice:', err);
     }
+
+    // 3. Update localStorage cache
+    if (typeof window !== 'undefined') {
+      try {
+        const cached = localStorage.getItem('atelierv_coupons_cache');
+        if (cached) {
+          const list: Coupon[] = JSON.parse(cached);
+          const filtered = list.filter(c => c.id !== cleanId && c.code.toUpperCase() !== cleanId.toUpperCase());
+          localStorage.setItem('atelierv_coupons_cache', JSON.stringify(filtered));
+        }
+      } catch {}
+    }
+
     return true;
   },
 
-  async validateCoupon(code: string, cartTotal: number): Promise<{ valid: boolean; code: string; discountAmount: number; discountType: string; discountValue: number }> {
+  async validateCoupon(code: string, cartTotal: number): Promise<{ valid: boolean; code: string; discountAmount: number; discountType: string; discountValue: number; minOrderValue?: number; maxDiscount?: number }> {
     const cleanCode = code.trim().toUpperCase();
-    const known = INITIAL_COUPONS.find(c => c.code.toUpperCase() === cleanCode && c.active);
-    if (known) {
-      let discountAmount = 0;
-      if (known.discountType === 'percentage') {
-        discountAmount = Math.round((cartTotal * known.discountValue) / 100);
-        if (known.maxDiscount && discountAmount > known.maxDiscount) {
-          discountAmount = known.maxDiscount;
-        }
-      } else {
-        discountAmount = Math.min(known.discountValue, cartTotal);
-      }
-      return {
-        valid: true,
-        code: known.code,
-        discountAmount,
-        discountType: known.discountType,
-        discountValue: known.discountValue
-      };
+    if (!cleanCode) {
+      throw new Error('Please enter a promotional code');
     }
 
+    // 1. Try server-side validation (authoritative)
     try {
       const res = await fetch('/api/coupons/validate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ code: cleanCode, cartTotal })
+        body: JSON.stringify({ code: cleanCode, subtotal: cartTotal, cartTotal })
       });
-      if (res.ok) return await res.json();
-    } catch {
-      // Throw below
+      if (res.ok) {
+        return await res.json();
+      } else {
+        const errData = await res.json().catch(() => ({}));
+        throw new Error(errData.error || 'Invalid or expired promotional code');
+      }
+    } catch (err: any) {
+      // If error came from the server rejection (400, 404, etc.), rethrow it immediately
+      if (err.message && !err.message.includes('fetch') && !err.message.includes('Failed to fetch')) {
+        throw err;
+      }
     }
-    throw new Error('Invalid or expired promotional code');
+
+    // 2. Client-side fallback if network offline
+    let couponsToCheck: Coupon[] = INITIAL_COUPONS;
+    if (typeof window !== 'undefined') {
+      try {
+        const cached = localStorage.getItem('atelierv_coupons_cache');
+        if (cached) {
+          couponsToCheck = [...JSON.parse(cached), ...INITIAL_COUPONS];
+        }
+      } catch {}
+    }
+
+    const matched = couponsToCheck.find(c => c.code.toUpperCase() === cleanCode);
+    if (!matched) {
+      throw new Error(`Promotional code '${cleanCode}' is invalid`);
+    }
+    if (!matched.active) {
+      throw new Error(`Promotional code '${cleanCode}' is no longer active`);
+    }
+    if (matched.startDate && new Date(matched.startDate) > new Date()) {
+      throw new Error(`Promotional code '${cleanCode}' will become active on ${matched.startDate}`);
+    }
+    if (matched.expiresAt && new Date(matched.expiresAt) < new Date()) {
+      throw new Error(`Promotional code '${cleanCode}' expired on ${matched.expiresAt}`);
+    }
+    if (matched.usageLimit && matched.usedCount >= matched.usageLimit) {
+      throw new Error(`Promotional code '${cleanCode}' has reached its usage limit`);
+    }
+    if (matched.minOrderValue && cartTotal < matched.minOrderValue) {
+      throw new Error(`Minimum order value of ₹${matched.minOrderValue} required for code '${cleanCode}'`);
+    }
+
+    let discountAmount = 0;
+    if (matched.discountType === 'percentage') {
+      discountAmount = (cartTotal * matched.discountValue) / 100;
+      if (matched.maxDiscount && discountAmount > matched.maxDiscount) {
+        discountAmount = matched.maxDiscount;
+      }
+    } else {
+      discountAmount = Math.min(matched.discountValue, cartTotal);
+    }
+
+    return {
+      valid: true,
+      code: matched.code,
+      discountAmount: Math.round(discountAmount * 100) / 100,
+      discountType: matched.discountType,
+      discountValue: matched.discountValue,
+      minOrderValue: matched.minOrderValue,
+      maxDiscount: matched.maxDiscount
+    };
   },
 
   // Reviews

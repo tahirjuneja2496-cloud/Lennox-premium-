@@ -59,6 +59,12 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({ onCheckout, onExplore })
     }
   };
 
+  const handleRemoveCoupon = () => {
+    setAppliedCoupon(null);
+    setCouponCode('');
+    addToast('Coupon removed', 'info');
+  };
+
   const handleProceedToCheckout = () => {
     setCartDrawerOpen(false);
     onCheckout();
@@ -218,25 +224,42 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({ onCheckout, onExplore })
           {cart.length > 0 && (
             <div className="p-6 border-t border-[#1A1A18]/10 bg-[#FBFBF9] space-y-4">
               {/* Coupon input */}
-              <form onSubmit={handleApplyCoupon} className="flex gap-2">
-                <div className="relative flex-1">
-                  <Tag className="w-3.5 h-3.5 absolute left-3 top-3 text-[#8A8A82]" />
-                  <input
-                    type="text"
-                    placeholder="Promotional code (e.g. LUXE15)"
-                    value={couponCode}
-                    onChange={(e) => setCouponCode(e.target.value)}
-                    className="w-full pl-8 pr-3 py-2 text-xs uppercase tracking-wider bg-transparent border border-[#1A1A18]/20 focus:border-[#1A1A18] focus:outline-hidden"
-                  />
+              {appliedCoupon ? (
+                <div className="flex items-center justify-between p-2.5 bg-emerald-50/70 border border-emerald-200 text-xs">
+                  <div className="flex items-center gap-2">
+                    <Tag className="w-3.5 h-3.5 text-emerald-700" />
+                    <span className="font-mono font-bold text-emerald-900">{appliedCoupon.code}</span>
+                    <span className="text-emerald-700">(-{formatPrice(appliedCoupon.discountAmount)})</span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleRemoveCoupon}
+                    className="text-emerald-800 hover:text-emerald-950 font-medium underline text-[11px] cursor-pointer"
+                  >
+                    Remove
+                  </button>
                 </div>
-                <button
-                  type="submit"
-                  disabled={isValidatingCoupon || !couponCode.trim()}
-                  className="px-3 py-2 text-xs uppercase tracking-wider font-medium bg-[#1A1A18] text-[#FBFBF9] hover:bg-[#333330] disabled:opacity-50 transition-colors cursor-pointer"
-                >
-                  Apply
-                </button>
-              </form>
+              ) : (
+                <form onSubmit={handleApplyCoupon} className="flex gap-2">
+                  <div className="relative flex-1">
+                    <Tag className="w-3.5 h-3.5 absolute left-3 top-3 text-[#8A8A82]" />
+                    <input
+                      type="text"
+                      placeholder="Privilege code (e.g. LENNOX20)"
+                      value={couponCode}
+                      onChange={(e) => setCouponCode(e.target.value)}
+                      className="w-full pl-8 pr-3 py-2 text-xs uppercase tracking-wider bg-transparent border border-[#1A1A18]/20 focus:border-[#1A1A18] focus:outline-hidden font-mono"
+                    />
+                  </div>
+                  <button
+                    type="submit"
+                    disabled={isValidatingCoupon || !couponCode.trim()}
+                    className="px-3 py-2 text-xs uppercase tracking-wider font-medium bg-[#1A1A18] text-[#FBFBF9] hover:bg-[#333330] disabled:opacity-50 transition-colors cursor-pointer"
+                  >
+                    {isValidatingCoupon ? '...' : 'Apply'}
+                  </button>
+                </form>
+              )}
 
               {/* Price Calculation breakdown */}
               <div className="space-y-1.5 text-xs text-[#52524D]">

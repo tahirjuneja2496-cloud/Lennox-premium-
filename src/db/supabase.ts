@@ -1,5 +1,5 @@
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
-import type { Order, Product } from '../types/index.ts';
+import type { Order, Product, Coupon } from '../types/index.ts';
 
 // -------------------------------------------------------------------------
 // Static Vite inlining for production bundles (Vercel, browsers, mobile)
@@ -530,3 +530,240 @@ export async function updateOrderInSupabase(
     return false;
   }
 }
+
+// =========================================================================
+// SUPABASE DATABASE: Coupon & Privilege System
+// =========================================================================
+
+export const COUPON_MIGRATION_SQL = `-- Supabase SQL Migration: Create Coupons Table
+CREATE TABLE IF NOT EXISTS public.coupons (
+  id TEXT PRIMARY KEY,
+  code TEXT NOT NULL UNIQUE,
+  discount_type TEXT NOT NULL DEFAULT 'percentage',
+  discount_value NUMERIC NOT NULL DEFAULT 0,
+  min_order_value NUMERIC NOT NULL DEFAULT 0,
+  max_discount NUMERIC,
+  start_date TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+  expires_at TIMESTAMP WITH TIME ZONE,
+  usage_limit INTEGER NOT NULL DEFAULT 100,
+  used_count INTEGER NOT NULL DEFAULT 0,
+  active BOOLEAN NOT NULL DEFAULT true,
+  data JSONB,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- Enable Row Level Security
+ALTER TABLE public.coupons ENABLE ROW LEVEL SECURITY;
+
+-- Drop any existing policies with the same names to allow re-running safely
+DROP POLICY IF EXISTS "Allow public select coupons" ON public.coupons;
+DROP POLICY IF EXISTS "Allow anon insert coupons" ON public.coupons;
+DROP POLICY IF EXISTS "Allow anon update coupons" ON public.coupons;
+DROP POLICY IF EXISTS "Allow anon delete coupons" ON public.coupons;
+
+-- Policies for public and anon client access
+CREATE POLICY "Allow public select coupons" ON public.coupons FOR SELECT USING (true);
+CREATE POLICY "Allow anon insert coupons" ON public.coupons FOR INSERT WITH CHECK (true);
+CREATE POLICY "Allow anon update coupons" ON public.coupons FOR UPDATE USING (true);
+CREATE POLICY "Allow anon delete coupons" ON public.coupons FOR DELETE USING (true);
+`;
+
+export function mapSupabaseToCoupon(row: any): Coupon {
+  if (row.data && typeof row.data === 'object' && row.data.code) {
+    const d = row.data;
+    return {
+      id: String(row.id || d.id),
+      code: String(row.code || d.code || '').toUpperCase().trim(),
+      discountType: (row.discount_type || d.discountType || 'percentage') as 'percentage' | 'fixed',
+      discountValue: Number(row.discount_value ?? d.discountValue ?? 0),
+      minOrderValue: Number(row.min_order_value ?? d.minOrderValue ?? 0),
+      maxDiscount: row.max_discount !== undefined && row.max_discount !== null 
+        ? Number(row.max_discount) 
+        : (d.maxDiscount !== undefined && d.maxDiscount !== null ? Number(d.maxDiscount) : undefined),
+      startDate: row.start_date || d.startDate || undefined,
+      expiresAt: row.expires_at || d.expiresAt || new Date(Date.now() + 365 * 86400000).toISOString().slice(0, 10),
+      usageLimit: Number(row.usage_limit ?? d.usageLimit ?? 100),
+      usedCount: Number(row.used_count ?? d.usedCount ?? 0),
+      active: row.active !== undefined ? Boolean(row.active) : Boolean(d.active !== false),
+      createdAt: row.created_at || d.createdAt || new Date().toISOString(),
+      updatedAt: row.updated_at || d.updatedAt || new Date().toISOString()
+    };
+  }
+
+  return {
+    id: String(row.id),
+    code: String(row.code || '').toUpperCase().trim(),
+    discountType: (row.discount_type || row.discountType || 'percentage') as 'percentage' | 'fixed',
+    discountValue: Number(row.discount_value ?? row.discountValue ?? 0),
+    minOrderValue: Number(row.min_order_value ?? row.minOrderValue ?? 0),
+    maxDiscount: row.max_discount !== undefined && row.max_discount !== null 
+      ? Number(row.max_discount) 
+      : (row.maxDiscount !== undefined && row.maxDiscount !== null ? Number(row.maxDiscount) : undefined),
+    startDate: row.start_date || row.startDate || undefined,
+    expiresAt: row.expires_at || row.expiresAt || new Date(Date.now() + 365 * 86400000).toISOString().slice(0, 10),
+    usageLimit: Number(row.usage_limit ?? row.usageLimit ?? 100),
+    usedCount: Number(row.used_count ?? row.usedCount ?? 0),
+    active: row.active !== undefined ? Boolean(row.active) : true,
+    createdAt: row.created_at || new Date().toISOString(),
+    updatedAt: row.updated_at || new Date().toISOString()
+  };
+}
+
+export function mapCouponToSupabase(c: Coupon): Record<string, any> {
+  const coupId = (c.id && String(c.id).trim()) ? String(c.id).trim() : `coup-${Date.now()}`;
+  const code = (c.code || '').toUpperCase().trim();
+  const now = new Date().toISOString();
+
+  return {
+    id: coupId,
+    code,
+    discount_type: c.discountType || 'percentage',
+    discount_value: Number(c.discountValue || 0),
+    min_order_value: Number(c.minOrderValue || 0),
+    max_discount: c.maxDiscount !== undefined && c.maxDiscount !== null ? Number(c.maxDiscount) : null,
+    start_date: c.startDate || now.slice(0, 10),
+    expires_at: c.expiresAt || new Date(Date.now() + 365 * 86400000).toISOString().slice(0, 10),
+    usage_limit: Number(c.usageLimit || 100),
+    used_count: Number(c.usedCount || 0),
+    active: c.active !== false,
+    data: { ...c, id: coupId, code },
+    created_at: c.createdAt || now,
+    updated_at: now
+  };
+}
+
+export interface SupabaseCouponsResult {
+  coupons: Coupon[];
+  connected: boolean;
+  tableMissing: boolean;
+  error?: string;
+}
+
+/**
+ * Retrieve all coupons from Supabase coupons table
+ */
+export async function getCouponsFromSupabase(): Promise<SupabaseCouponsResult> {
+  if (!client) {
+    return { coupons: [], connected: false, tableMissing: false, error: 'Supabase client not initialized' };
+  }
+  try {
+    const { data, error } = await client
+      .from('coupons')
+      .select('*')
+      .order('created_at', { ascending: false });
+
+    if (error) {
+      const isMissing = isTableMissingError(error);
+      return {
+        coupons: [],
+        connected: true,
+        tableMissing: isMissing,
+        error: error.message
+      };
+    }
+
+    if (!data) {
+      return { coupons: [], connected: true, tableMissing: false };
+    }
+
+    const mapped = data.map(mapSupabaseToCoupon);
+    return {
+      coupons: mapped,
+      connected: true,
+      tableMissing: false
+    };
+  } catch (err: any) {
+    return {
+      coupons: [],
+      connected: false,
+      tableMissing: false,
+      error: err?.message || 'Failed to query Supabase coupons'
+    };
+  }
+}
+
+/**
+ * Save or update a coupon in Supabase coupons table
+ */
+export async function saveCouponToSupabase(
+  coupon: Coupon
+): Promise<{ success: boolean; data?: any; error?: string; tableMissing?: boolean }> {
+  if (!client) {
+    return { success: false, error: 'Supabase client not initialized' };
+  }
+  try {
+    const row = mapCouponToSupabase(coupon);
+    const { data, error } = await client.from('coupons').upsert(row).select();
+
+    if (error) {
+      const isMissing = isTableMissingError(error);
+      console.warn('[Atelier V] Supabase saveCoupon notice:', error.message);
+      return { success: false, error: error.message, tableMissing: isMissing };
+    }
+    return { success: true, data };
+  } catch (err: any) {
+    console.warn('[Atelier V] Supabase saveCoupon error:', err?.message || err);
+    return { success: false, error: err?.message || 'Database error' };
+  }
+}
+
+/**
+ * Delete a coupon from Supabase coupons table
+ */
+export async function deleteCouponFromSupabase(
+  id: string
+): Promise<{ success: boolean; error?: string; tableMissing?: boolean }> {
+  if (!client) {
+    return { success: false, error: 'Supabase client not initialized' };
+  }
+  try {
+    const { error } = await client.from('coupons').delete().eq('id', id);
+    if (error) {
+      const isMissing = isTableMissingError(error);
+      console.warn('[Atelier V] Supabase deleteCoupon notice:', error.message);
+      return { success: false, error: error.message, tableMissing: isMissing };
+    }
+    return { success: true };
+  } catch (err: any) {
+    console.warn('[Atelier V] Supabase deleteCoupon error:', err?.message || err);
+    return { success: false, error: err?.message || 'Database error' };
+  }
+}
+
+/**
+ * Increment usage count of a coupon in Supabase
+ */
+export async function incrementCouponUsageInSupabase(
+  code: string
+): Promise<{ success: boolean; error?: string }> {
+  if (!client || !code) return { success: false };
+  try {
+    const { data, error } = await client
+      .from('coupons')
+      .select('id, used_count')
+      .eq('code', code.toUpperCase().trim())
+      .limit(1);
+
+    if (error || !data || data.length === 0) {
+      return { success: false, error: error?.message || 'Coupon not found' };
+    }
+
+    const currentCount = Number(data[0].used_count || 0);
+    const { error: updateErr } = await client
+      .from('coupons')
+      .update({
+        used_count: currentCount + 1,
+        updated_at: new Date().toISOString()
+      })
+      .eq('id', data[0].id);
+
+    if (updateErr) {
+      return { success: false, error: updateErr.message };
+    }
+    return { success: true };
+  } catch (err: any) {
+    return { success: false, error: err?.message };
+  }
+}
+

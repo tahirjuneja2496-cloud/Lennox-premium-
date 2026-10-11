@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { ShieldCheck, ArrowLeft, Banknote, Truck, AlertCircle } from 'lucide-react';
+import { ShieldCheck, ArrowLeft, Banknote, Truck, AlertCircle, Tag } from 'lucide-react';
 import { useStore } from '../context/StoreContext';
 import { CustomerDetails, Order } from '../types';
 import { api } from '../services/api';
@@ -39,6 +39,7 @@ export const CheckoutView: React.FC<CheckoutViewProps> = ({ onBackToShopping, on
 
   const [errors, setErrors] = useState<{ [key: string]: string }>({});
   const [couponCode, setCouponCode] = useState('');
+  const [isApplyingCoupon, setIsApplyingCoupon] = useState(false);
   const [appliedCoupon, setAppliedCoupon] = useState<{
     code: string;
     discountAmount: number;
@@ -86,19 +87,29 @@ export const CheckoutView: React.FC<CheckoutViewProps> = ({ onBackToShopping, on
 
   const handleApplyCoupon = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!couponCode.trim()) return;
+    const clean = couponCode.trim().toUpperCase();
+    if (!clean) return;
+    setIsApplyingCoupon(true);
     try {
-      const res = await api.validateCoupon(couponCode, cartSubtotal);
+      const res = await api.validateCoupon(clean, cartSubtotal);
       if (res.valid) {
         setAppliedCoupon({
           code: res.code,
           discountAmount: res.discountAmount
         });
-        addToast(`Coupon '${res.code}' applied (-${formatPrice(res.discountAmount)})`);
+        addToast(`Coupon '${res.code}' applied (-${formatPrice(res.discountAmount)})`, 'success');
       }
     } catch (err: any) {
       addToast(err.message || 'Invalid promotional code', 'error');
+    } finally {
+      setIsApplyingCoupon(false);
     }
+  };
+
+  const handleRemoveCoupon = () => {
+    setAppliedCoupon(null);
+    setCouponCode('');
+    addToast('Coupon removed', 'info');
   };
 
   const handlePlaceOrder = async (e: React.FormEvent) => {
@@ -441,21 +452,41 @@ export const CheckoutView: React.FC<CheckoutViewProps> = ({ onBackToShopping, on
 
             {/* Coupon Code Input */}
             <div className="pt-4 border-t border-[#1A1A18]/10">
-              <form onSubmit={handleApplyCoupon} className="flex gap-2">
-                <input
-                  type="text"
-                  placeholder="Code (e.g. ATELIER10)"
-                  value={couponCode}
-                  onChange={(e) => setCouponCode(e.target.value)}
-                  className="flex-1 bg-[#F4F4F0] border border-[#1A1A18]/20 px-3 py-2 text-xs uppercase tracking-wider text-[#1A1A18] focus:outline-hidden"
-                />
-                <button
-                  type="submit"
-                  className="px-4 py-2 bg-[#1A1A18] text-[#FBFBF9] uppercase tracking-wider text-xs font-semibold hover:bg-[#333330] transition-colors cursor-pointer"
-                >
-                  Apply
-                </button>
-              </form>
+              {appliedCoupon ? (
+                <div className="flex items-center justify-between p-3 bg-emerald-50/70 border border-emerald-200 text-xs">
+                  <div className="flex items-center gap-2">
+                    <Tag className="w-3.5 h-3.5 text-emerald-700" />
+                    <div>
+                      <span className="font-mono font-bold text-emerald-900">{appliedCoupon.code}</span>
+                      <span className="text-emerald-700 ml-2">(-{formatPrice(appliedCoupon.discountAmount)} applied)</span>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleRemoveCoupon}
+                    className="text-emerald-800 hover:text-emerald-950 font-medium underline text-[11px] cursor-pointer"
+                  >
+                    Remove
+                  </button>
+                </div>
+              ) : (
+                <form onSubmit={handleApplyCoupon} className="flex gap-2">
+                  <input
+                    type="text"
+                    placeholder="Privilege Code (e.g. LENNOX20)"
+                    value={couponCode}
+                    onChange={(e) => setCouponCode(e.target.value)}
+                    className="flex-1 bg-[#F4F4F0] border border-[#1A1A18]/20 px-3 py-2 text-xs uppercase tracking-wider text-[#1A1A18] focus:outline-hidden font-mono"
+                  />
+                  <button
+                    type="submit"
+                    disabled={isApplyingCoupon}
+                    className="px-4 py-2 bg-[#1A1A18] text-[#FBFBF9] uppercase tracking-wider text-xs font-semibold hover:bg-[#333330] transition-colors cursor-pointer disabled:opacity-50"
+                  >
+                    {isApplyingCoupon ? 'Verifying...' : 'Apply'}
+                  </button>
+                </form>
+              )}
             </div>
 
             {/* Cost Breakdown */}

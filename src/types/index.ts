@@ -171,10 +171,13 @@ export interface Coupon {
   discountValue: number;
   minOrderValue: number;
   maxDiscount?: number;
+  startDate?: string;
   expiresAt: string;
   usageLimit: number;
   usedCount: number;
   active: boolean;
+  createdAt?: string;
+  updatedAt?: string;
 }
 
 export interface Review {

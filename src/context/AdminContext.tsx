@@ -78,7 +78,15 @@ export const AdminProvider: React.FC<{ children: ReactNode }> = ({ children }) =
 
   const [orders, setOrders] = useState<Order[]>([]);
   const [customers, setCustomers] = useState<CustomerProfile[]>([]);
-  const [coupons, setCoupons] = useState<Coupon[]>([]);
+  const [coupons, setCoupons] = useState<Coupon[]>(() => {
+    if (typeof window !== 'undefined') {
+      try {
+        const cached = localStorage.getItem('atelierv_coupons_cache');
+        if (cached) return JSON.parse(cached);
+      } catch {}
+    }
+    return [];
+  });
   const [reviews, setReviews] = useState<Review[]>([]);
   const [loading, setLoading] = useState(false);
 
@@ -102,7 +110,9 @@ export const AdminProvider: React.FC<{ children: ReactNode }> = ({ children }) =
       ]);
       setOrders(oData);
       setCustomers(cData);
-      setCoupons(coupData);
+      if (Array.isArray(coupData) && coupData.length > 0) {
+        setCoupons(coupData);
+      }
       setReviews(rData);
     } catch (err: any) {
       if (err?.message?.includes('Unauthorized') || err?.message?.includes('401')) {
@@ -264,7 +274,9 @@ export const AdminProvider: React.FC<{ children: ReactNode }> = ({ children }) =
         addToast(`Coupon ${saved.code} created`);
       }
       setCoupons((prev) =>
-        isEdit ? prev.map((c) => (c.id === saved.id ? saved : c)) : [saved, ...prev]
+        isEdit
+          ? prev.map((c) => (c.id === saved.id || c.code.toUpperCase() === saved.code.toUpperCase() ? saved : c))
+          : [saved, ...prev.filter((c) => c.code.toUpperCase() !== saved.code.toUpperCase())]
       );
       return saved;
     } catch (err: any) {

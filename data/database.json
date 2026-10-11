@@ -201,7 +201,7 @@
       "price": 680,
       "originalPrice": 850,
       "discountPercent": 20,
-      "stock": 8,
+      "stock": 7,
       "lowStockThreshold": 3,
       "images": [
         "/src/assets/images/product_sculptural_lamp_1790850449675.jpg",
@@ -507,6 +507,42 @@
   ],
   "orders": [
     {
+      "id": "ORD-20261011-7351",
+      "customer": {
+        "fullName": "Test Patron",
+        "mobileNumber": "9876543210",
+        "address": "123 Test Boulevard",
+        "city": "Mumbai",
+        "state": "Maharashtra",
+        "pincode": "400001"
+      },
+      "items": [
+        {
+          "productId": "prod-001",
+          "productName": "No. 04 Sculptural Bronze & Fluted Alabaster Table Lamp",
+          "sku": "SKU-001",
+          "price": 680,
+          "quantity": 1,
+          "subtotal": 680
+        }
+      ],
+      "pricing": {
+        "subtotal": 680,
+        "discount": 136,
+        "couponCode": "LENNOXTEST661",
+        "shipping": 0,
+        "grandTotal": 544
+      },
+      "payment": {
+        "method": "cod",
+        "status": "pending",
+        "transactionId": "COD_1791710829246"
+      },
+      "status": "Pending",
+      "createdAt": "2026-10-11T09:27:09.246Z",
+      "updatedAt": "2026-10-11T09:27:09.246Z"
+    },
+    {
       "id": "ORD-20261003-3286",
       "customer": {
         "fullName": "Priya Kapoor",
@@ -601,9 +637,9 @@
       "phone": "9876543210",
       "city": "Mumbai",
       "country": "India",
-      "totalOrders": 1,
-      "totalSpent": 250,
-      "lastOrderDate": "2026-10-02",
+      "totalOrders": 2,
+      "totalSpent": 794,
+      "lastOrderDate": "2026-10-11",
       "status": "Active"
     }
   ],
