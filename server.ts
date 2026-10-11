@@ -839,6 +839,9 @@ app.get('/api/customers', requireAdmin, async (req: Request, res: Response) => {
 // API: Coupons
 // -------------------------------------------------------------
 app.get('/api/coupons/status', async (req: Request, res: Response) => {
+  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+  res.setHeader('Pragma', 'no-cache');
+  res.setHeader('Expires', '0');
   try {
     const client = getSupabaseClient();
     if (!client) {
@@ -864,6 +867,9 @@ app.get('/api/coupons/status', async (req: Request, res: Response) => {
 
 // GET: Read coupons directly from Supabase public.coupons table
 app.get('/api/coupons', async (req: Request, res: Response) => {
+  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+  res.setHeader('Pragma', 'no-cache');
+  res.setHeader('Expires', '0');
   try {
     const client = getSupabaseClient();
     if (!client) {
