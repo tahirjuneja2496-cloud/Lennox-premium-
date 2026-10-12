@@ -132,7 +132,7 @@ export const AdminSettings: React.FC = () => {
                     announcementBar: { ...formData.announcementBar, text: e.target.value }
                   })
                 }
-                placeholder="Complimentary Global Shipping on Orders Over $250..."
+                placeholder="Complimentary Express Delivery on Orders Over ₹1,999..."
                 className="w-full bg-[#F4F4F0] border border-[#1A1A18]/20 px-3 py-2 text-xs text-[#1A1A18] focus:outline-hidden"
               />
             </div>
@@ -270,7 +270,7 @@ export const AdminSettings: React.FC = () => {
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div>
-              <label className="block text-[#1A1A18] font-medium mb-1">Default Express Delivery Fee ($)</label>
+              <label className="block text-[#1A1A18] font-medium mb-1">Default Express Delivery Fee (₹)</label>
               <input
                 type="number"
                 value={formData.shippingCharges}
@@ -280,7 +280,7 @@ export const AdminSettings: React.FC = () => {
             </div>
 
             <div>
-              <label className="block text-[#1A1A18] font-medium mb-1">Complimentary Delivery Threshold ($)</label>
+              <label className="block text-[#1A1A18] font-medium mb-1">Complimentary Delivery Threshold (₹)</label>
               <input
                 type="number"
                 value={formData.freeShippingThreshold}

@@ -181,8 +181,8 @@ export const ShopView: React.FC<ShopViewProps> = ({ initialCategory = '', onSele
                 className="w-full accent-[#1A1A18] cursor-pointer"
               />
               <div className="flex justify-between text-[10px] text-[#71716A] mt-1">
-                <span>$200</span>
-                <span>$2,500</span>
+                <span>{formatPrice(200)}</span>
+                <span>{formatPrice(2500)}</span>
               </div>
             </div>
 

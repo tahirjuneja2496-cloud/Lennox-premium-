@@ -232,8 +232,10 @@ router.get('/coupons', async (_req: Request, res: Response) => {
   try {
     const client = getSupabaseClient();
     if (!client) {
-      console.warn('[Vercel API /coupons] Supabase client not initialized, returning initial coupons');
-      return res.json(INITIAL_COUPONS);
+      console.error('[Vercel API /coupons] Missing Supabase configuration: SUPABASE_URL and SUPABASE_ANON_KEY must be set.');
+      return res.status(500).json({
+        error: 'Supabase is not configured on the server. Please configure SUPABASE_URL and SUPABASE_ANON_KEY (or SUPABASE_SERVICE_ROLE_KEY) environment variables.'
+      });
     }
 
     const { data, error } = await client
@@ -243,18 +245,14 @@ router.get('/coupons', async (_req: Request, res: Response) => {
 
     if (error) {
       console.error('[Vercel API /coupons] Supabase query error:', error.message);
-      return res.json(INITIAL_COUPONS);
+      return res.status(500).json({ error: error.message || 'Failed to fetch coupons from database' });
     }
 
-    if (data && Array.isArray(data)) {
-      const coupons = data.map(mapSupabaseToCoupon);
-      return res.json(coupons);
-    }
-
-    return res.json(INITIAL_COUPONS);
+    const coupons: Coupon[] = (data || []).map(mapSupabaseToCoupon);
+    return res.json(coupons);
   } catch (err: any) {
     console.error('[Vercel API /coupons] Exception:', err);
-    res.json(INITIAL_COUPONS);
+    res.status(500).json({ error: err?.message || 'Failed to fetch coupons' });
   }
 });
 

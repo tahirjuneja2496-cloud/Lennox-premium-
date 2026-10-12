@@ -462,8 +462,12 @@ export const api = {
   async getCoupons(): Promise<Coupon[]> {
     // 1. Fetch from server endpoint which queries public.coupons table in Supabase
     try {
-      const res = await apiFetch('/api/coupons', {
-        headers: getAuthHeaders()
+      const res = await apiFetch(`/api/coupons?_t=${Date.now()}`, {
+        cache: 'no-store',
+        headers: {
+          'Cache-Control': 'no-cache',
+          ...getAuthHeaders()
+        }
       });
       if (res.ok) {
         const data = await res.json();
@@ -513,7 +517,13 @@ export const api = {
 
   async getCouponDatabaseStatus(): Promise<{ supabaseConnected: boolean; tableMissing: boolean; count: number; error?: string; migrationSql: string }> {
     try {
-      const res = await apiFetch('/api/coupons/status');
+      const res = await apiFetch(`/api/coupons/status?_t=${Date.now()}`, {
+        cache: 'no-store',
+        headers: {
+          'Cache-Control': 'no-cache',
+          ...getAuthHeaders()
+        }
+      });
       if (res.ok) return await res.json();
     } catch {}
 

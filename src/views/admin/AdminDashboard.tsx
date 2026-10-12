@@ -212,7 +212,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigateTab })
               <h3 className="text-xl font-serif text-[#1A1A18] mt-0.5">Semi-Annual Trajectory</h3>
             </div>
             <span className="text-xs font-mono font-medium text-[#1A1A18] bg-[#F4F4F0] px-2.5 py-1">
-              USD ($)
+              INR (₹)
             </span>
           </div>
 
@@ -249,12 +249,12 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigateTab })
 
               {/* Data points */}
               {[
-                { x: 40, y: 140, val: '$4.2k' },
-                { x: 120, y: 122, val: '$6.8k' },
-                { x: 200, y: 128, val: '$5.9k' },
-                { x: 280, y: 105, val: '$9.2k' },
-                { x: 360, y: 66, val: '$14.8k' },
-                { x: 440, y: 34, val: '$19.4k' }
+                { x: 40, y: 140, val: '₹4.2k' },
+                { x: 120, y: 122, val: '₹6.8k' },
+                { x: 200, y: 128, val: '₹5.9k' },
+                { x: 280, y: 105, val: '₹9.2k' },
+                { x: 360, y: 66, val: '₹14.8k' },
+                { x: 440, y: 34, val: '₹19.4k' }
               ].map((pt, i) => (
                 <g key={i}>
                   <circle cx={pt.x} cy={pt.y} r="4" fill="#FBFBF9" stroke="#1A1A18" strokeWidth="2" />

@@ -682,6 +682,36 @@
   ],
   "coupons": [
     {
+      "id": "coup-1791726485620",
+      "code": "LUXE777",
+      "discountType": "percentage",
+      "discountValue": 15,
+      "minOrderValue": 450,
+      "maxDiscount": 600,
+      "startDate": "2026-10-11",
+      "expiresAt": "2026-11-30",
+      "usageLimit": 100,
+      "usedCount": 0,
+      "active": true,
+      "createdAt": "2026-10-11T13:48:08.545+00:00",
+      "updatedAt": "2026-10-11T13:48:08.545+00:00"
+    },
+    {
+      "id": "coup-1791713163782-uux0l",
+      "code": "FAIZ777",
+      "discountType": "percentage",
+      "discountValue": 15,
+      "minOrderValue": 500,
+      "maxDiscount": 1000,
+      "startDate": "2026-10-11",
+      "expiresAt": "2027-10-11",
+      "usageLimit": 100,
+      "usedCount": 0,
+      "active": true,
+      "createdAt": "2026-10-11T10:06:03.781+00:00",
+      "updatedAt": "2026-10-11T10:06:03.783+00:00"
+    },
+    {
       "id": "coup-1791712340828",
       "code": "LENNOX10-9K0W",
       "discountType": "percentage",

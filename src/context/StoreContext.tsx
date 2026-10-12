@@ -117,6 +117,11 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
         api.getProducts(),
         api.getCategories()
       ]);
+      if (sData) {
+        if (!sData.currency || sData.currency === '$') {
+          sData.currency = '₹';
+        }
+      }
       setSettings(sData);
       setProducts(pData);
       setCategories(cData);
@@ -293,8 +298,9 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   const cartCount = cart.reduce((sum, item) => sum + item.quantity, 0);
 
   const formatPrice = (amount: number) => {
-    const symbol = settings.currency || '$';
-    return `${symbol}${amount.toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 2 })}`;
+    const symbol = (!settings.currency || settings.currency === '$') ? '₹' : settings.currency;
+    const val = typeof amount === 'number' && !isNaN(amount) ? amount : 0;
+    return `${symbol}${val.toLocaleString('en-IN', { minimumFractionDigits: 0, maximumFractionDigits: 2 })}`;
   };
 
   return (

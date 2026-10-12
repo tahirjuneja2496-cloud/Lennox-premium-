@@ -685,7 +685,7 @@ export const AdminProductForm: React.FC<AdminProductFormProps> = ({
 
           <div className="grid grid-cols-1 sm:grid-cols-4 gap-6">
             <div>
-              <label className="block text-[#1A1A18] font-medium mb-1.5">Sale Price ($) *</label>
+              <label className="block text-[#1A1A18] font-medium mb-1.5">Sale Price (₹) *</label>
               <input
                 type="number"
                 required
@@ -696,7 +696,7 @@ export const AdminProductForm: React.FC<AdminProductFormProps> = ({
             </div>
 
             <div>
-              <label className="block text-[#1A1A18] font-medium mb-1.5">Original / MRP Price ($)</label>
+              <label className="block text-[#1A1A18] font-medium mb-1.5">Original / MRP Price (₹)</label>
               <input
                 type="number"
                 value={originalPrice}
@@ -1149,7 +1149,7 @@ export const AdminProductForm: React.FC<AdminProductFormProps> = ({
                   </div>
                   <div className="grid grid-cols-2 gap-2">
                     <div>
-                      <label className="text-[10px] uppercase text-[#71716A] block mb-1">Price ($)</label>
+                      <label className="text-[10px] uppercase text-[#71716A] block mb-1">Price (₹)</label>
                       <input
                         type="number"
                         value={v.price}
